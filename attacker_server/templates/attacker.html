@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entropy Attacker Console</title>
+
+  <style>
+    :root {
+      --bg: #010302;
+      --panel: #061108;
+      --line: #163b1a;
+      --green: #6cff2b;
+      --green-dim: #438d2c;
+      --red: #ff2a2a;
+      --amber: #ffb000;
+      --muted: #8fb88a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      overflow: hidden;
+      background:
+        repeating-linear-gradient(
+          0deg,
+          rgba(0, 0, 0, .3) 0 1px,
+          transparent 1px 3px
+        ),
+        var(--bg);
+      color: var(--green);
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      height: 100vh;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      background: #180000;
+      border-bottom: 2px dashed var(--red);
+    }
+
+    header h1 {
+      margin: 0;
+      color: var(--red);
+      font-size: 18px;
+      line-height: 1.4;
+    }
+
+    .stamp {
+      padding: 8px 12px;
+      border: 2px solid var(--red);
+      color: var(--red);
+      transform: rotate(-5deg);
+      font-weight: bold;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 9px 18px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    a {
+      color: var(--amber);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr);
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .families {
+      min-height: 0;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      border-right: 1px solid var(--line);
+      scrollbar-color: var(--green-dim) #020702;
+      scrollbar-width: thin;
+    }
+
+    .families::-webkit-scrollbar,
+    #log::-webkit-scrollbar {
+      width: 12px;
+    }
+
+    .families::-webkit-scrollbar-track,
+    #log::-webkit-scrollbar-track {
+      background: #020702;
+    }
+
+    .families::-webkit-scrollbar-thumb,
+    #log::-webkit-scrollbar-thumb {
+      background: var(--green-dim);
+      border: 2px solid #020702;
+    }
+
+    .families h2 {
+      padding: 14px 18px 8px;
+      color: var(--green-dim);
+      font-size: 13px;
+    }
+
+    .family {
+      width: 100%;
+      padding: 13px 18px;
+      border: 0;
+      border-left: 3px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .family:hover,
+    .family.active {
+      background: #0b220e;
+      color: var(--green);
+      border-left-color: var(--green);
+    }
+
+    .family small {
+      display: block;
+      margin-top: 5px;
+      color: #567a52;
+    }
+
+    .content {
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 12px;
+      min-width: 0;
+      min-height: 0;
+      padding: 18px;
+      overflow: hidden;
+    }
+
+    .panel {
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: rgba(0, 25, 5, .7);
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      color: var(--amber);
+      font-size: 18px;
+    }
+
+    .details {
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .details span {
+      color: var(--green);
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    button {
+      padding: 9px 13px;
+      border: 1px solid var(--green);
+      background: #041806;
+      color: var(--green);
+      font: inherit;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0a2c10;
+    }
+
+    button.danger {
+      border-color: var(--red);
+      background: #250000;
+      color: #ffb3b3;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .35;
+    }
+
+    label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input[type="range"] {
+      accent-color: var(--green);
+    }
+
+    progress {
+      width: 100%;
+      height: 12px;
+      accent-color: var(--green);
+    }
+
+    #phase {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    #error {
+      min-height: 18px;
+      margin-top: 8px;
+      color: var(--red);
+    }
+
+    .terminal {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+      border: 1px solid var(--line);
+      background: #000;
+    }
+
+    .terminal-title {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--green-dim);
+      font-size: 12px;
+    }
+
+    #log {
+      flex: 1;
+      min-height: 0;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      padding: 12px;
+      white-space: pre-wrap;
+      color: var(--green);
+      font-size: 13px;
+      line-height: 1.6;
+      scrollbar-color: var(--green-dim) #020702;
+      scrollbar-width: thin;
+    }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 18px;
+      border-top: 1px solid var(--line);
+      color: #527050;
+      font-size: 11px;
+    }
+
+    @media (max-width: 800px) {
+      body {
+        overflow: auto;
+      }
+
+      .app {
+        min-height: 100vh;
+        height: auto;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+
+      .families {
+        max-height: 260px;
+      }
+
+      .content {
+        min-height: 700px;
+      }
+
+      .topbar,
+      footer {
+        flex-direction: column;
+        gap: 6px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header>
+      <h1>THIS BOX IS OURS.<br>entropy lab // attacker node 8001</h1>
+      <div class="stamp">SAFE LAB<br>SIMULATION</div>
+    </header>
+
+    <div class="topbar">
+      <div>
+        user=<b>r00t</b>
+        host=<b>attacker</b>
+        tty=<b>8001</b>
+      </div>
+
+      <div>
+        victim
+        <a id="victim-link" href="#" target="_blank">victim UI</a>
+        &nbsp;|&nbsp;
+        SOC
+        <a id="soc-link" href="#" target="_blank">dashboard</a>
+      </div>
+
+      <div>
+        files=<b id="file-count">?</b>
+        locked=<b id="locked-count">0</b>
+        engine=<b id="engine-status">IDLE</b>
+      </div>
+    </div>
+
+    <main>
+      <aside class="families">
+        <h2>./exploits</h2>
+        <div id="family-list">Loading families...</div>
+      </aside>
+
+      <section class="content">
+        <div class="panel">
+          <h2 id="family-name">SELECT PAYLOAD</h2>
+
+          <div class="details" id="family-details">
+            Select an attack family from the left.
+          </div>
+
+          <div id="phase">phase=IDLE</div>
+          <progress id="progress" value="0" max="100"></progress>
+
+          <div class="controls">
+            <button id="launch" class="danger" onclick="launchAttack()">
+              ./launch.sh
+            </button>
+
+            <button id="pause" onclick="togglePause()" disabled>
+              pause
+            </button>
+
+            <button id="stop" onclick="stopAttack()" disabled>
+              stop attack
+            </button>
+
+            <button onclick="resetVictim()">
+              reset victim
+            </button>
+
+            <button onclick="downloadLog()">
+              download log
+            </button>
+
+            <label>
+              speed
+              <input
+                id="speed"
+                type="range"
+                min="0.1"
+                max="5"
+                step="0.1"
+                value="1"
+                oninput="changeSpeed(this.value)"
+              >
+              <span id="speed-label">1.0x</span>
+            </label>
+          </div>
+
+          <div id="error"></div>
+        </div>
+
+        <div class="details" id="statistics">
+          hit=0 skipped=0 notes=0 bytes=0 progress=0%
+        </div>
+
+        <div class="terminal">
+          <div class="terminal-title">
+            <span>root@attacker: ~/campaign.log</span>
+            <span id="log-count">0 lines</span>
+          </div>
+
+          <div id="log">waiting for operator...</div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>SAFE SIMULATION · NO REAL ENCRYPTION</span>
+      <span>ONLY generated victim files are modified</span>
+    </footer>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    const state = {
+      families: [],
+      selected: "wannacry",
+      followLog: true
+    };
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[character]));
+    }
+
+    function setError(message) {
+      $("error").textContent = message || "";
+    }
+
+    function formatBytes(value) {
+      value = Number(value || 0);
+
+      if (value < 1024) {
+        return `${value} B`;
+      }
+
+      if (value < 1024 * 1024) {
+        return `${(value / 1024).toFixed(1)} KB`;
+      }
+
+      return `${(value / 1048576).toFixed(2)} MB`;
+    }
+
+    async function loadFamilies() {
+      const response = await fetch("/api/families");
+      state.families = await response.json();
+
+      if (!state.families.some(item => item.id === state.selected)) {
+        state.selected = state.families[0]?.id;
+      }
+
+      renderFamilies();
+      renderFamilyDetails();
+    }
+
+    function renderFamilies() {
+      $("family-list").innerHTML = state.families.map((family, index) => `
+        <button
+          class="family ${family.id === state.selected ? "active" : ""}"
+          onclick="selectFamily('${family.id}')">
+          [${index + 1}] ${escapeHtml(family.name)}
+          <small>
+            ${escapeHtml(family.extension)} ·
+            ${escapeHtml(family.speed)}
+          </small>
+        </button>
+      `).join("");
+    }
+
+    function selectFamily(id) {
+      state.selected = id;
+      renderFamilies();
+      renderFamilyDetails();
+    }
+
+    function renderFamilyDetails() {
+      const family = state.families.find(
+        item => item.id === state.selected
+      );
+
+      if (!family) {
+        return;
+      }
+
+      $("family-name").textContent = family.name.toUpperCase();
+
+      $("family-details").innerHTML =
+        `id=<span>${escapeHtml(family.id)}</span><br>` +
+        `extension=<span>${escapeHtml(family.extension)}</span><br>` +
+        `note=<span>${escapeHtml(family.note)}</span><br>` +
+        `speed=<span>${escapeHtml(family.speed)}</span><br>` +
+        `style=<span>${escapeHtml(family.style)}</span>`;
+    }
+
+    async function launchAttack() {
+      setError("");
+
+      const response = await fetch("/api/launch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          family: state.selected
+        })
+      });
+
+      const result = await response.json();
+
+      if (!result.ok) {
+        setError(result.error || "Attack could not start");
+      }
+
+      await poll();
+    }
+
+    async function stopAttack() {
+      await fetch("/api/stop", {
+        method: "POST"
+      });
+
+      await poll();
+    }
+
+    async function togglePause() {
+      const paused = $("pause").dataset.paused === "true";
+      const endpoint = paused ? "/api/resume" : "/api/pause";
+
+      await fetch(endpoint, {
+        method: "POST"
+      });
+
+      await poll();
+    }
+
+    async function changeSpeed(value) {
+      $("speed-label").textContent =
+        `${Number(value).toFixed(1)}x`;
+
+      await fetch("/api/speed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          factor: Number(value)
+        })
+      });
+    }
+
+    async function resetVictim() {
+      if (!confirm("Restore the clean victim fixture set?")) {
+        return;
+      }
+
+      const response = await fetch("/api/reset", {
+        method: "POST"
+      });
+
+      const result = await response.json();
+
+      if (!result.ok) {
+        setError(result.error || "Reset failed");
+      }
+
+      await poll();
+    }
+
+    function downloadLog() {
+      window.location.href = "/api/log";
+    }
+
+    function watchLog() {
+      $("log").addEventListener("scroll", () => {
+        const distance =
+          $("log").scrollHeight -
+          $("log").scrollTop -
+          $("log").clientHeight;
+
+        state.followLog = distance < 15;
+      });
+    }
+
+    async function poll() {
+      try {
+        const response = await fetch("/api/stats");
+        const stats = await response.json();
+        const victim = stats.victim || {};
+
+        $("file-count").textContent =
+          victim.exists ? victim.total : "missing";
+
+        $("locked-count").textContent = victim.locked || 0;
+
+        $("engine-status").textContent = stats.active
+          ? (stats.paused ? "PAUSED" : "RUNNING")
+          : (stats.phase || "IDLE");
+
+        $("launch").disabled = Boolean(stats.active);
+        $("stop").disabled = !stats.active;
+        $("pause").disabled = !stats.active;
+        $("pause").dataset.paused = String(Boolean(stats.paused));
+        $("pause").textContent = stats.paused ? "resume" : "pause";
+
+        $("phase").innerHTML =
+          `phase=<span>${escapeHtml(stats.phase || "IDLE")}</span>`;
+
+        $("progress").value = stats.progress || 0;
+
+        $("statistics").innerHTML =
+          `hit=<span>${stats.files_hit || 0}</span> ` +
+          `skipped=<span>${stats.files_skipped || 0}</span> ` +
+          `notes=<span>${stats.notes_dropped || 0}</span> ` +
+          `bytes=<span>${formatBytes(stats.bytes_encrypted)}</span> ` +
+          `progress=<span>${stats.progress || 0}%</span> ` +
+          `family=<span>${escapeHtml(stats.family || "-")}</span>`;
+
+        const entries = stats.log || [];
+
+        $("log-count").textContent =
+          `${entries.length} lines`;
+
+        $("log").innerHTML = entries.length
+          ? entries.map(entry =>
+              `<span style="color:#4d7348">${escapeHtml(entry.time)}</span>  ` +
+              `${escapeHtml(entry.msg)}`
+            ).join("\n")
+          : "waiting for operator...";
+
+        if (state.followLog) {
+          $("log").scrollTop = $("log").scrollHeight;
+        }
+      } catch (error) {
+        setError(
+          "Attacker server unavailable. Run: " +
+          "python attacker_server/app.py"
+        );
+      }
+    }
+
+    function setupLinks() {
+      const host = window.location.hostname;
+      const protocol = window.location.protocol;
+
+      $("victim-link").href =
+        `${protocol}//${host}:8002`;
+
+      $("soc-link").href =
+        `${protocol}//${host}:5000`;
+    }
+
+    async function start() {
+      setupLinks();
+      await loadFamilies();
+      watchLog();
+      await poll();
+
+      setInterval(poll, 700);
+    }
+
+    start();
+  </script>
+</body>
+</html>

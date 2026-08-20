@@ -1,0 +1,10 @@
+watchdog==4.0.1
+psutil==5.9.8
+numpy==1.26.4
+torch==2.2.1
+flask==3.0.2
+web3==6.15.1
+python-dotenv==1.0.1
+flask-socketio==5.3.6
+eventlet==0.35.2
+colorama==0.4.6

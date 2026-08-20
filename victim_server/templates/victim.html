@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ENTROPY File Explorer</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      background: #ffffff;
+      color: #202124;
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    .window {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Top title bar */
+    .titlebar {
+      display: flex;
+      align-items: center;
+      height: 42px;
+      padding: 0 16px;
+      background: #ffffff;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .app-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      margin-right: 10px;
+      border-radius: 4px;
+      background: #1683d8;
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .window-title {
+      font-size: 14px;
+      color: #303030;
+    }
+
+    .window-controls {
+      display: flex;
+      gap: 24px;
+      margin-left: auto;
+      color: #444;
+      font-size: 18px;
+    }
+
+    /* Command toolbar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      height: 52px;
+      padding: 0 16px;
+      border-bottom: 1px solid #eeeeee;
+      gap: 18px;
+    }
+
+    .toolbar-button {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #333;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .toolbar-button:hover {
+      background: #f0f0f0;
+    }
+
+    .toolbar-button.new {
+      border: 1px solid #d0d0d0;
+      background: #ffffff;
+    }
+
+    .toolbar-spacer {
+      flex: 1;
+    }
+
+    .attack-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #188038;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .attack-status.danger {
+      color: #c5221f;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* Address/search row */
+    .navigation {
+      display: flex;
+      align-items: center;
+      height: 54px;
+      padding: 0 16px;
+      gap: 10px;
+      border-bottom: 1px solid #eeeeee;
+    }
+
+    .nav-button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      background: transparent;
+      color: #555;
+      cursor: pointer;
+      font-size: 18px;
+      border-radius: 4px;
+    }
+
+    .nav-button:hover {
+      background: #f0f0f0;
+    }
+
+    .addressbar {
+      display: flex;
+      align-items: center;
+      flex: 1;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid #d6d6d6;
+      border-radius: 4px;
+      color: #333;
+      background: #ffffff;
+    }
+
+    .address-home {
+      color: #555;
+      margin-right: 8px;
+    }
+
+    .address-separator {
+      margin: 0 8px;
+      color: #999;
+    }
+
+    .address-current {
+      font-weight: 600;
+    }
+
+    .searchbox {
+      width: 250px;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid #d6d6d6;
+      border-radius: 4px;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .searchbox:focus {
+      border-color: #1683d8;
+    }
+
+    /* Main explorer area */
+    .explorer {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .sidebar {
+      width: 250px;
+      padding: 14px 8px;
+      overflow-y: auto;
+      border-right: 1px solid #e5e5e5;
+      background: #fafafa;
+    }
+
+    .side-heading {
+      padding: 8px 12px;
+      color: #777;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .side-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 9px 12px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #303030;
+      cursor: pointer;
+      text-align: left;
+      font-family: inherit;
+      font-size: 14px;
+    }
+
+    .side-item:hover {
+      background: #eeeeee;
+    }
+
+    .side-item.active {
+      background: #dceeff;
+      color: #0563a8;
+      font-weight: 600;
+    }
+
+    .side-icon {
+      width: 22px;
+      text-align: center;
+      font-size: 18px;
+    }
+
+    .side-count {
+      margin-left: auto;
+      color: #777;
+      font-size: 12px;
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .content-header {
+      display: flex;
+      align-items: center;
+      height: 46px;
+      padding: 0 24px;
+      border-bottom: 1px solid #eeeeee;
+      color: #555;
+    }
+
+    .folder-label {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .item-count {
+      margin-left: 12px;
+      color: #777;
+      font-size: 13px;
+    }
+
+    .file-area {
+      flex: 1;
+      overflow: auto;
+    }
+
+    .file-header,
+    .file-row {
+      display: grid;
+      grid-template-columns: minmax(300px, 1fr) 180px 150px 110px;
+      align-items: center;
+      min-width: 760px;
+    }
+
+    .file-header {
+      height: 38px;
+      padding: 0 24px;
+      border-bottom: 1px solid #eeeeee;
+      color: #666;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .file-row {
+      min-height: 54px;
+      padding: 0 24px;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+    }
+
+    .file-row:hover {
+      background: #f4f8fc;
+    }
+
+    .file-row.encrypted {
+      background: #fff4f4;
+      color: #c5221f;
+      cursor: not-allowed;
+    }
+
+    .file-row.encrypted:hover {
+      background: #ffe9e9;
+    }
+
+    .file-name {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .file-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 36px;
+      border-radius: 4px;
+      background: #e9f2ff;
+      color: #1769aa;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .file-row.encrypted .file-icon {
+      background: #ffe0e0;
+      color: #c5221f;
+    }
+
+    .file-name-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-meta {
+      color: #666;
+      font-size: 13px;
+    }
+
+    .file-row.encrypted .file-meta {
+      color: #c5221f;
+    }
+
+    .empty {
+      padding: 80px 20px;
+      color: #777;
+      text-align: center;
+    }
+
+    /* Footer */
+    .footer {
+      display: flex;
+      align-items: center;
+      height: 30px;
+      padding: 0 16px;
+      border-top: 1px solid #eeeeee;
+      color: #777;
+      font-size: 12px;
+    }
+
+    .footer-status {
+      margin-left: auto;
+    }
+
+    /* Preview modal */
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 10;
+    }
+
+    .modal.open {
+      display: flex;
+    }
+
+    .modal-box {
+      display: flex;
+      flex-direction: column;
+      width: min(850px, 90vw);
+      height: min(650px, 80vh);
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      height: 50px;
+      padding: 0 18px;
+      border-bottom: 1px solid #eeeeee;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      margin-left: auto;
+      border: 0;
+      background: transparent;
+      color: #555;
+      cursor: pointer;
+      font-size: 20px;
+    }
+
+    .modal-content {
+      flex: 1;
+      padding: 22px;
+      overflow: auto;
+      background: #fafafa;
+    }
+
+    .modal-content pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: Consolas, monospace;
+      line-height: 1.5;
+    }
+
+    .encrypted-message {
+      padding: 60px 20px;
+      color: #c5221f;
+      text-align: center;
+      font-size: 18px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="window">
+
+    <div class="titlebar">
+      <div class="app-logo">E</div>
+      <div class="window-title" id="window-title">
+        Documents - File Explorer
+      </div>
+
+      <div class="window-controls">
+        <span>−</span>
+        <span>□</span>
+        <span>×</span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button class="toolbar-button new">
+        <span>＋</span>
+        <span>New</span>
+      </button>
+
+      <button class="toolbar-button">✂ Cut</button>
+      <button class="toolbar-button">▣ Copy</button>
+      <button class="toolbar-button">▣ Paste</button>
+      <button class="toolbar-button">↗ Share</button>
+      <button class="toolbar-button">↕ Sort</button>
+      <button class="toolbar-button">☷ View</button>
+
+      <div class="toolbar-spacer"></div>
+
+      <div class="attack-status" id="attack-status">
+        <span class="status-dot"></span>
+        <span>System operational</span>
+      </div>
+    </div>
+
+    <div class="navigation">
+      <button class="nav-button" onclick="goBack()">←</button>
+      <button class="nav-button" onclick="goHome()">↑</button>
+
+      <div class="addressbar">
+        <span class="address-home">▣ This PC</span>
+        <span class="address-separator">›</span>
+        <span class="address-current" id="address-current">
+          Documents
+        </span>
+      </div>
+
+      <input
+        class="searchbox"
+        id="searchbox"
+        placeholder="Search This PC"
+        oninput="filterFiles()"
+      >
+    </div>
+
+    <div class="explorer">
+
+      <aside class="sidebar">
+        <div class="side-heading">Quick access</div>
+
+        <button class="side-item" onclick="selectFolder('Desktop')">
+          <span class="side-icon">▣</span>
+          <span>Desktop</span>
+        </button>
+
+        <button class="side-item active" onclick="selectFolder('Documents')">
+          <span class="side-icon">▣</span>
+          <span>Documents</span>
+        </button>
+
+        <button class="side-item" onclick="selectFolder('Downloads')">
+          <span class="side-icon">▣</span>
+          <span>Downloads</span>
+        </button>
+
+        <button class="side-item" onclick="selectFolder('Pictures')">
+          <span class="side-icon">▣</span>
+          <span>Pictures</span>
+        </button>
+      </aside>
+
+      <section class="content">
+        <div class="content-header">
+          <span class="folder-label" id="folder-label">
+            Documents
+          </span>
+          <span class="item-count" id="item-count"></span>
+        </div>
+
+        <div class="file-area">
+          <div class="file-header">
+            <div>Name</div>
+            <div>Date modified</div>
+            <div>Type</div>
+            <div>Size</div>
+          </div>
+
+          <div id="file-list"></div>
+        </div>
+
+        <div class="footer">
+          <span id="footer-count"></span>
+          <span class="footer-status" id="footer-status"></span>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="modal" id="preview-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span id="modal-title">File Preview</span>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+
+      <div class="modal-content" id="modal-content">
+        <pre></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentFolder = "Documents";
+    let currentFiles = [];
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function selectFolder(folder) {
+      currentFolder = folder;
+
+      document.querySelectorAll(".side-item").forEach(button => {
+        button.classList.remove("active");
+      });
+
+      document.getElementById("address-current").textContent = folder;
+      document.getElementById("folder-label").textContent = folder;
+      document.getElementById("window-title").textContent =
+        `${folder} - File Explorer`;
+
+      loadFiles();
+    }
+
+    function goBack() {
+      selectFolder("Documents");
+    }
+
+    function goHome() {
+      selectFolder("Documents");
+    }
+
+    async function loadFiles() {
+      const response = await fetch(
+        `/api/files/${encodeURIComponent(currentFolder)}`
+      );
+
+      currentFiles = await response.json();
+      renderFiles();
+    }
+
+    function filterFiles() {
+      renderFiles();
+    }
+
+    function renderFiles() {
+      const query = document
+        .getElementById("searchbox")
+        .value
+        .toLowerCase();
+
+      const files = currentFiles.filter(file =>
+        file.name.toLowerCase().includes(query)
+      );
+
+      const fileList = document.getElementById("file-list");
+
+      document.getElementById("item-count").textContent =
+        `${files.length} items`;
+
+      document.getElementById("footer-count").textContent =
+        `${files.length} items`;
+
+      if (files.length === 0) {
+        fileList.innerHTML = `
+          <div class="empty">This folder is empty</div>
+        `;
+        return;
+      }
+
+      fileList.innerHTML = files.map(file => {
+        const encrypted = file.encrypted;
+        const note = Boolean(file.is_note);
+
+        let clickAction = "";
+
+        if (!encrypted && note) {
+          clickAction =
+            `onclick="openNote('${currentFolder}', '${file.name}', '${file.is_note}')"`;
+        } else if (!encrypted) {
+          clickAction =
+            `onclick="openFile('${currentFolder}', '${file.name}')"`;
+        }
+
+        const type = encrypted
+          ? "Encrypted"
+          : `${file.extension.replace(".", "").toUpperCase()} File`;
+
+        return `
+          <div class="file-row ${encrypted ? "encrypted" : ""}"
+               ${clickAction}>
+
+            <div class="file-name">
+              <div class="file-icon">
+                ${escapeHtml(file.icon)}
+              </div>
+
+              <div class="file-name-text">
+                ${escapeHtml(file.name)}
+              </div>
+            </div>
+
+            <div class="file-meta">
+              ${escapeHtml(file.modified)}
+            </div>
+
+            <div class="file-meta">
+              ${type}
+            </div>
+
+            <div class="file-meta">
+              ${escapeHtml(file.size)}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function openFile(folder, filename) {
+      const response = await fetch(
+        `/api/file/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        showEncryptedMessage();
+        return;
+      }
+
+      document.getElementById("modal-title").textContent =
+        `Preview - ${data.name}`;
+
+      document.getElementById("modal-content").innerHTML = `
+        <pre>${escapeHtml(data.content || "Empty file")}</pre>
+      `;
+
+      document.getElementById("preview-modal").classList.add("open");
+    }
+
+    async function openNote(folder, filename, family) {
+      const response = await fetch(
+        `/api/note/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`
+      );
+
+      const data = await response.json();
+
+      document.getElementById("modal-title").textContent =
+        `${family} Ransom Note`;
+
+      document.getElementById("modal-content").innerHTML = `
+        <pre>${escapeHtml(data.content || "No content")}</pre>
+      `;
+
+      document.getElementById("preview-modal").classList.add("open");
+    }
+
+    function showEncryptedMessage() {
+      document.getElementById("modal-title").textContent =
+        "File unavailable";
+
+      document.getElementById("modal-content").innerHTML = `
+        <div class="encrypted-message">
+          This file has been encrypted and can no longer be opened.
+        </div>
+      `;
+
+      document.getElementById("preview-modal").classList.add("open");
+    }
+
+    function closeModal() {
+      document.getElementById("preview-modal").classList.remove("open");
+    }
+
+    async function updateStatus() {
+      const response = await fetch("/api/status");
+      const status = await response.json();
+
+      const attackStatus = document.getElementById("attack-status");
+      const statusText = attackStatus.querySelector("span:last-child");
+
+      if (status.system_status === "OPERATIONAL") {
+        attackStatus.className = "attack-status";
+        statusText.textContent = "System operational";
+        document.getElementById("footer-status").textContent =
+          "All files are healthy";
+      } else {
+        attackStatus.className = "attack-status danger";
+        statusText.textContent =
+          `${status.system_status} · ${status.encrypted_files} encrypted`;
+        document.getElementById("footer-status").textContent =
+          `${status.compromise_pct}% compromised`;
+      }
+    }
+
+    async function refresh() {
+      await loadFiles();
+      await updateStatus();
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>
