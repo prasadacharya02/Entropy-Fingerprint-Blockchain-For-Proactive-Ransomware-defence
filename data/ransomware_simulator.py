@@ -547,43 +547,25 @@ class TrainingDataGenerator:
         return samples
 
     def generate_and_save(self, normal_count=200,
-                          ransomware_count=200):
-        """
-        Generate balanced training dataset and save to file.
-        """
-        import json
+                          ransomware_count=200, seed=1337):
+        """Generate a versioned train/eval split with a fixed seed."""
+        from data.training_schema import write_dataset, load_samples
 
         log.info("")
         log.info("=" * 50)
         log.info("GENERATING TRAINING DATA")
         log.info("=" * 50)
 
-        normal_samples     = self.generate_normal_samples(normal_count)
-        ransomware_samples = self.generate_ransomware_samples(
-                                ransomware_count)
-
-        all_samples = normal_samples + ransomware_samples
-
-        # Shuffle the data
-        random.shuffle(all_samples)
-
-        # Save to file
-        output_path = os.path.join(
-            config.TRAINING_DATA_DIR, "training_data.json")
-        os.makedirs(config.TRAINING_DATA_DIR, exist_ok=True)
-
-        with open(output_path, 'w') as f:
-            json.dump(all_samples, f, indent=2)
-
-        log.info("")
-        log.info(f"Training data saved to:")
-        log.info(f"  {output_path}")
-        log.info(f"Total samples  : {len(all_samples)}")
-        log.info(f"Normal         : {normal_count}")
-        log.info(f"Ransomware     : {ransomware_count}")
-        log.info("")
-
-        return output_path, all_samples
+        train_path, eval_path = write_dataset(
+            config.TRAINING_DATA_DIR,
+            seed=seed,
+            normal_count=normal_count,
+            ransomware_count=ransomware_count,
+        )
+        samples = load_samples(train_path)
+        log.info("Train: %s (%d samples)", train_path, len(samples))
+        log.info("Eval : %s", eval_path)
+        return str(train_path), samples
 
 
 # ============================================================

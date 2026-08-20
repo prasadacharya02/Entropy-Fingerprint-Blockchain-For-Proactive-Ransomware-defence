@@ -201,6 +201,10 @@ def send_html(handler):
         "__ATTACKER_URL__",
         attacker_url,
     )
+    html = html.replace(
+        "__CONTROL_TOKEN__",
+        config.CONTROL_TOKEN or "",
+    )
 
     body = html.encode("utf-8")
 
@@ -251,6 +255,10 @@ def control_authorized(handler):
         return address.is_loopback
     except ValueError:
         return False
+
+
+# Compatibility alias expected by tests/test_control_security.py
+_control_authorized = control_authorized
 
 
 def send_forbidden(handler):

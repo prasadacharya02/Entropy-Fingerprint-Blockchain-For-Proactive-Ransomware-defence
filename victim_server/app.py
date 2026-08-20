@@ -9,6 +9,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.insert(0, ROOT_DIR)
 import config
+from catalog import LOCK_EXTENSIONS, family_from_filename
 USER_FILES = os.path.join(BASE_DIR, "user_files")
 ALLOWED_FOLDERS = frozenset({"Documents", "Downloads", "Desktop", "Pictures"})
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
@@ -49,9 +50,7 @@ def get_folder_stats(folder_path: str):
         except OSError:
             continue
         extension = os.path.splitext(filename)[1].lower()
-        if extension in (".wncry", ".wncryt", ".ryk", ".lockbit", ".abcd"):
-            encrypted += 1
-        elif filename.startswith("RECOVER-") or "READ_ME" in filename:
+        if extension in LOCK_EXTENSIONS or family_from_filename(filename):
             encrypted += 1
     return total_files, total_size, encrypted
 def format_size(size_bytes: int) -> str:
@@ -73,29 +72,21 @@ def _safe_file_path(folder: str, filename: str) -> Path | None:
         return None
     return candidate
 def _file_family(filename: str):
-    extension = os.path.splitext(filename)[1].lower()
-    if extension in (".wncry", ".wncryt"):
-        return "WannaCry"
-    if extension == ".ryk":
-        return "Ryuk"
-    if extension in (".lockbit", ".abcd"):
-        return "LockBit"
-    if len(extension) == 8 and extension.startswith("."):
-        return "BlackCat/ALPHV"
-    return None
+    return family_from_filename(filename) if os.path.splitext(filename)[1].lower() in LOCK_EXTENSIONS else None
 def _ransom_note_family(filename: str):
-    if "@Please_Read_Me@" in filename:
-        return "WannaCry"
-    if "RyukReadMe" in filename:
-        return "Ryuk"
-    if "Restore-My-Files" in filename:
-        return "LockBit"
-    if filename.startswith("RECOVER-"):
-        return "BlackCat/ALPHV"
-    return False
+    family = family_from_filename(filename)
+    if not family:
+        return False
+    if os.path.splitext(filename)[1].lower() in LOCK_EXTENSIONS:
+        return False
+    return family
 @app.route("/")
 def index():
     return render_template("victim.html")
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok", "service": "victim"})
 @app.route("/api/folders")
 def get_folders():
     folders = []

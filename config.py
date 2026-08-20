@@ -116,6 +116,9 @@ WHITELISTED_PROCESSES = [
     "services.exe",
     "lsass.exe",
     "svchost.exe",
+    "systemd",
+    "init",
+    "kthreadd",
 ]
 
 # Detection thresholds
@@ -154,6 +157,8 @@ SECRET_KEY = os.getenv("ENTROPY_SECRET_KEY", "entropy-local-development-only")
 # Control routes are local-only by default. Set this token when the lab must be
 # controlled remotely; clients must send Authorization: Bearer <token>.
 CONTROL_TOKEN = os.getenv("ENTROPY_CONTROL_TOKEN", "").strip()
+# Destructive terminate/quarantine is simulated unless explicitly disabled.
+DRY_RUN = _env_bool("ENTROPY_DRY_RUN", True)
 
 # DQN settings
 STATE_SIZE = 10

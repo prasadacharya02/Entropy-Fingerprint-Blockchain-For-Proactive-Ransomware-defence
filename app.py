@@ -21,7 +21,7 @@ sys.path.insert(0, BASE_DIR)
 import config
 from storage.database import connect, init_db as initialize_database
 from blockchain.connector import BlockchainConnector
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
 # ── App Setup ──────────────────────────────────────
@@ -73,7 +73,33 @@ ACTION_MAP = {
 
 @app.route("/")
 def index():
+    return render_template("platform.html")
+
+
+@app.route("/legacy")
+def legacy_dashboard():
     return render_template("dashboard.html")
+
+
+@app.route("/api/platform")
+def platform():
+    status = bc.get_status()
+    return jsonify({
+        "product": "ENTROPY",
+        "tagline": "Entropy fingerprinting with an auditable response ledger",
+        "edition": "Command Platform",
+        "version": "2.0.0",
+        "dry_run": bool(config.DRY_RUN),
+        "watch_folders": config.WATCH_FOLDERS,
+        "ledger_mode": status.get("mode"),
+        "is_blockchain": status.get("is_blockchain", False),
+        "positioning": "Purple-team range for SOC training — not an EDR replacement",
+    })
+
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok", "service": "dashboard"})
 
 
 @app.route("/api/stats")
@@ -177,10 +203,17 @@ def blockchain_status():
         connected = bc.verify_chain()
         count     = bc.get_event_count()
         status = bc.get_status()
+        labels = {
+            "ganache": "Ganache smart contract",
+            "fallback": "Local SQLite ledger (not a blockchain)",
+            "none": "Offline — no ledger",
+        }
+        mode = status.get("mode", "none")
         return jsonify({
             "connected"      : connected,
             "is_blockchain"  : status.get("is_blockchain", connected),
-            "mode"           : status.get("mode", "none"),
+            "mode"           : mode,
+            "mode_label"     : labels.get(mode, mode),
             "tx_count"       : count,
             "address"        : config.CONTRACT_ADDRESS,
             "network"        : config.GANACHE_URL
@@ -291,12 +324,11 @@ def push_updates():
 
 @app.route("/api/dqn/last")
 def dqn_last_decision():
-    """Show reasoning for last threat"""
+    """Show persisted decision metadata, not fabricated scores."""
     try:
         db = get_db()
         row = db.execute("""
             SELECT * FROM events
-            WHERE action >= 1
             ORDER BY id DESC LIMIT 1
         """).fetchone()
         db.close()
@@ -305,14 +337,20 @@ def dqn_last_decision():
             return jsonify({
                 "decision": "STANDBY",
                 "confidence": 0,
+                "engine": "none",
+                "explanation": "",
                 "factors": []
             })
 
+        keys = row.keys()
         entropy = row["entropy"] or 0
         delta   = row["entropy_delta"] or 0
         action  = row["action"] or 0
-        path    = row["file_path"] or ""
-        ext_chg = path.endswith(('.locked', '.encrypted', '.enc'))
+        engine  = row["engine"] if "engine" in keys and row["engine"] else "rules"
+        explanation = row["explanation"] if "explanation" in keys else ""
+        confidence = row["confidence"] if "confidence" in keys and row["confidence"] is not None else 0
+        if isinstance(confidence, float) and confidence <= 1:
+            confidence = round(confidence * 100, 1)
 
         decisions = {
             0: "IGNORE",
@@ -320,43 +358,23 @@ def dqn_last_decision():
             2: "TERMINATE",
             3: "TERMINATE + QUARANTINE"
         }
+        outcome = row["outcome"] if "outcome" in keys and row["outcome"] else row["status"]
 
-        # Factors that determined the decision
         factors = [
-            {
-                "name": "Entropy above threshold (7.5)",
-                "value": f"{entropy:.2f}",
-                "pass": entropy >= 7.5
-            },
-            {
-                "name": "Entropy delta significant",
-                "value": f"{abs(delta):.2f}",
-                "pass": abs(delta) >= 1.5
-            },
-            {
-                "name": "Extension changed",
-                "value": "YES" if ext_chg else "NO",
-                "pass": ext_chg
-            },
-            {
-                "name": "File type suspicious",
-                "value": path.split('.')[-1][:10] if '.' in path else '--',
-                "pass": ext_chg
-            },
-            {
-                "name": "Process unsigned",
-                "value": "UNKNOWN",
-                "pass": True
-            }
+            {"name": "Engine", "value": engine, "pass": engine == "dqn"},
+            {"name": "Requested action", "value": decisions.get(action, "UNKNOWN"), "pass": action >= 1},
+            {"name": "Outcome", "value": outcome or "--", "pass": True},
+            {"name": "Entropy", "value": f"{entropy:.2f}", "pass": entropy >= config.ENTROPY_THRESHOLD},
+            {"name": "Entropy delta", "value": f"{abs(delta):.2f}", "pass": abs(delta) >= config.ENTROPY_DELTA_THRESHOLD},
         ]
-
-        # Confidence based on how many factors triggered
-        passed = sum(1 for f in factors if f["pass"])
-        confidence = min(99, 60 + (passed * 10))
+        if explanation:
+            factors.append({"name": "Explanation", "value": explanation[:80], "pass": True})
 
         return jsonify({
             "decision": decisions.get(action, "UNKNOWN"),
             "confidence": confidence,
+            "engine": engine,
+            "explanation": explanation,
             "factors": factors
         })
     except Exception:
@@ -398,52 +416,11 @@ def flagged_processes():
 
 @app.route("/api/demo/trigger", methods=["POST"])
 def demo_trigger():
-    """Inject fake ransomware events for demo"""
-    try:
-        db = get_db()
-
-        demo_files = [
-            "financial_report_Q3.xlsx",
-            "customer_database.db",
-            "employee_records.docx",
-            "product_designs.pdf",
-            "source_code.zip"
-        ]
-
-        base_time = datetime.now()
-
-        for i, fname in enumerate(demo_files):
-            # Space events 1 second apart for a realistic timeline
-            event_time = base_time + timedelta(seconds=i)
-            fake_path  = f"C:\\Users\\demo\\Documents\\{fname}.locked"
-            entropy    = round(random.uniform(7.85, 7.99), 4)
-            delta      = round(random.uniform(2.5, 3.5), 4)
-            fake_pid   = random.randint(1000, 9999)
-
-            db.execute("""
-                INSERT INTO events
-                (timestamp, file_path, event_type, entropy, entropy_delta,
-                 pid, process_name, action, status)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            """, (
-                event_time.isoformat(),
-                fake_path,
-                "RENAMED",
-                entropy,
-                delta,
-                fake_pid,
-                "ransomware_demo.exe",
-                3,
-                "TERMINATED+QUARANTINED"
-            ))
-
-        db.commit()
-        db.close()
-
-        return jsonify({"status": "ok", "injected": len(demo_files)})
-    except Exception:
-        log.exception("Demo trigger API failed")
-        return _api_error("demo trigger failed")
+    """Refuse fabricated events; the attacker lab generates real fixture activity."""
+    return jsonify({
+        "status": "rejected",
+        "error": "synthetic event injection is disabled; use the attacker console",
+    }), 409
 
 
 @app.route("/api/threat-level")
@@ -489,6 +466,66 @@ def threat_level():
         return _api_error("threat level unavailable")
 
 
+@app.route("/api/folders")
+def platform_folders():
+    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
+    import importlib
+    victim_app = importlib.import_module("victim_server.app")
+    with victim_app.app.test_request_context():
+        response = victim_app.get_folders()
+    return response
+
+
+@app.route("/api/lab/families")
+def lab_families():
+    from catalog import list_families
+    return jsonify(list_families())
+
+
+@app.route("/api/lab/status")
+def lab_status():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    from attacker_server.app import victim_snapshot
+    stats = engines.current_stats()
+    stats["victim"] = victim_snapshot()
+    stats["dry_run"] = bool(config.DRY_RUN)
+    return jsonify(stats)
+
+
+@app.route("/api/lab/launch", methods=["POST"])
+def lab_launch():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    payload = request.get_json(silent=True) or {}
+    family = str(payload.get("family") or "").strip().lower()
+    if family not in engines.FAMILIES:
+        return jsonify({"ok": False, "error": "unknown family"}), 400
+    ok, engine = engines.start_attack(family)
+    if not ok:
+        return jsonify({"ok": False, "error": "engine refused to start"}), 500
+    return jsonify({"ok": True, "family": engine.name, "stats": engine.get_stats()})
+
+
+@app.route("/api/lab/stop", methods=["POST"])
+def lab_stop():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    return jsonify({"ok": True, "stopped": bool(engines.stop_attack())})
+
+
+@app.route("/api/lab/reset", methods=["POST"])
+def lab_reset():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    engines.stop_attack()
+    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
+    from create_fake_files import restore_all_files
+    restore_all_files()
+    from attacker_server.app import victim_snapshot
+    return jsonify({"ok": True, "victim": victim_snapshot()})
+
+
 # ═══════════════════════════════════════════════════
 # START
 # ═══════════════════════════════════════════════════
@@ -510,5 +547,6 @@ if __name__ == "__main__":
         host   = config.FLASK_HOST,
         port   = config.FLASK_PORT,
         debug  = False,
-        use_reloader = False
+        use_reloader = False,
+        allow_unsafe_werkzeug = True,
     )

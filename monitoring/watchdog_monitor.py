@@ -116,8 +116,56 @@ class ProcessFinder:
         self.process_cache = {}
     
     def get_process_info(self, file_path):
-        """Fast lookup — returns most recently started suspicious process."""
-        return self._find_recent_suspicious()
+        """Attribute a file event only when evidence is available.
+
+        An open-file match is treated as verified. The previous "newest
+        non-whitelisted process" heuristic is retained as an unverified
+        guess so the dashboard still has a hint, but it must never be
+        enough to kill a process.
+        """
+        verified = self._find_by_open_file(file_path)
+        if verified:
+            return verified
+        guessed = self._find_recent_suspicious()
+        if guessed:
+            guessed["attribution_source"] = "recent_process_guess"
+            guessed["identity_verified"] = False
+            return guessed
+        return None
+
+    def _find_by_open_file(self, file_path):
+        try:
+            target = os.path.realpath(file_path)
+        except OSError:
+            return None
+
+        current_time = time.time()
+        try:
+            for proc in psutil.process_iter(["pid", "name", "create_time", "exe"]):
+                try:
+                    info = proc.info
+                    create_time = info.get("create_time")
+                    if create_time is None or (current_time - create_time) > 120:
+                        continue
+                    for handle in proc.open_files():
+                        try:
+                            if os.path.realpath(handle.path) == target:
+                                return {
+                                    "pid": info["pid"],
+                                    "name": info.get("name") or "",
+                                    "create_time": create_time,
+                                    "identity_verified": True,
+                                    "attribution_source": "open_file",
+                                    "age_seconds": round(current_time - create_time, 2),
+                                    "exe": info.get("exe"),
+                                }
+                        except OSError:
+                            continue
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception as exc:
+            log.debug("Open-file attribution error: %s", exc)
+        return None
     
     def _find_recent_suspicious(self):
         """Find the most recently started non-whitelisted process."""

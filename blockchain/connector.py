@@ -252,7 +252,15 @@ class BlockchainConnector:
                 log.error("No accounts available")
                 return False
 
-            self.account = accounts[config.ACCOUNT_INDEX]
+            configured = (config.WALLET_ADDRESS or "").strip()
+            if configured:
+                checksum = self.w3.to_checksum_address(configured)
+                if checksum not in accounts:
+                    print("[BLOCKCHAIN] ❌ ENTROPY_WALLET_ADDRESS is not a Ganache account")
+                    return False
+                self.account = checksum
+            else:
+                self.account = accounts[config.ACCOUNT_INDEX]
 
             print(f"[BLOCKCHAIN] Contract loaded ✅")
             print(f"             Address : {config.CONTRACT_ADDRESS}")

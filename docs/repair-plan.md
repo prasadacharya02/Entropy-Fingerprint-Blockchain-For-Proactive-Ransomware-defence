@@ -27,15 +27,15 @@ working tree, automated checks, and documented behavior.
 ## Day 2 — Unified application integration
 
 - Select one orchestrator and retire duplicate execution paths.
-- Add one launcher for pipeline, dashboard, attacker, and victim services.
+- Add one launcher for pipeline, dashboard, attacker, and victim services (`lab.py`).
 - Connect the controlled victim fixture directory to the detector.
 - Add graceful startup/shutdown and integration tests.
 
 ## Day 3 — Safe response and process attribution
 
-- Default destructive responses to dry-run.
-- Replace "most recent process" attribution with controlled, verified identity.
-- Record requested actions separately from actual outcomes.
+- Default destructive responses to dry-run (`ENTROPY_DRY_RUN=true`).
+- Replace "most recent process" attribution with open-file verification; guesses stay unverified.
+- Record requested actions separately from actual outcomes (`requested_action`, `outcome`, `dry_run`).
 - Add termination and quarantine safety tests.
 
 ## Day 4 — Detection and event-pipeline correctness
@@ -45,7 +45,25 @@ working tree, automated checks, and documented behavior.
 - Replace the dropping deque with observable backpressure.
 - Correct event-rate calculation and multi-signal detection rules.
 
-## Day 5 — DQN data and model reliability
+## Day 5 — DQN data and model reliability (implemented)
+
+- Versioned train/eval JSON (`data/training_schema.py`, seed + holdout).
+- Persist engine, confidence, Q-values, and explanation on events.
+- Checkpoint validation remains in `DQNAgent.load`.
+
+## Day 6 — Dashboard and simulator consistency (implemented)
+
+- Shared family catalog (`catalog.py`) used by attacker and victim UIs.
+- Dashboard shows persisted decisions; demo injection is rejected.
+- Untrusted UI strings are HTML-escaped.
+
+## Day 7 — Blockchain hardening and release validation (implemented)
+
+- `logThreat` is `onlyOwner`; wallet address must match Ganache accounts.
+- Modes labelled: ganache / fallback / none (`mode_label`).
+- Deployment helper `blockchain/deploy.py` and `docs/limitations.md`.
+
+## Day 5 — DQN data and model reliability (original)
 
 - Generate valid, versioned training data from a documented schema.
 - Use deterministic seeds and held-out evaluation data.

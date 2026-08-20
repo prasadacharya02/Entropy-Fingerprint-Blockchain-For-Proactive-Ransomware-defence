@@ -396,8 +396,9 @@ if __name__ == "__main__":
     print(f"Loading training data from:")
     print(f"  {training_file}")
 
-    with open(training_file, 'r') as f:
-        training_data = json.load(f)
+    from data.training_schema import load_samples, validate_sample
+
+    training_data = [s for s in load_samples(training_file) if validate_sample(s)]
 
     print(f"Loaded {len(training_data)} samples")
 

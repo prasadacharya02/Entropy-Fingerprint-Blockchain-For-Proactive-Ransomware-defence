@@ -8,18 +8,29 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
+import sys
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+from catalog import list_families as catalog_families
+
 VICTIM_ROOT = (ROOT_DIR / "victim_server" / "user_files").resolve()
 VICTIM_BASE = str(VICTIM_ROOT)
+# Compatibility aliases used by the safety/integration tests.
+_VICTIM_ROOT = VICTIM_ROOT
+
+
+def _victim_root() -> Path:
+    return Path(_VICTIM_ROOT).resolve()
 
 
 def safe_path(path, allow_root=False):
     try:
+        root = _victim_root()
         candidate = Path(path).resolve(strict=False)
-        candidate.relative_to(VICTIM_ROOT)
+        candidate.relative_to(root)
 
-        if not allow_root and candidate == VICTIM_ROOT:
+        if not allow_root and candidate == root:
             return None
 
         return candidate
@@ -27,8 +38,14 @@ def safe_path(path, allow_root=False):
         return None
 
 
+def _confined_path(path, allow_root=False):
+    """Return a path only when it stays inside the victim fixture tree."""
+    return safe_path(path, allow_root=allow_root)
+
+
 def victim_ready():
-    return VICTIM_ROOT.is_dir() and not VICTIM_ROOT.is_symlink()
+    root = _victim_root()
+    return root.is_dir() and not root.is_symlink()
 
 
 class BaseRansomware:
@@ -95,13 +112,13 @@ class BaseRansomware:
         if not victim_ready():
             return files, folders
 
-        for directory, dirnames, filenames in os.walk(VICTIM_ROOT):
+        for directory, dirnames, filenames in os.walk(_victim_root()):
             safe_directory = safe_path(directory, allow_root=True)
 
             if safe_directory is None:
                 continue
 
-            folders.append(safe_directory)
+            folders.append(str(safe_directory))
 
             for filename in filenames:
                 candidate = safe_path(
@@ -109,7 +126,7 @@ class BaseRansomware:
                 )
 
                 if candidate is not None and candidate.is_file():
-                    files.append(candidate)
+                    files.append(str(candidate))
 
         return files, folders
 
@@ -220,7 +237,7 @@ class BaseRansomware:
             if new_path is None:
                 return False
 
-            file_path.rename(new_path)
+            Path(file_path).rename(new_path)
 
             with self.lock:
                 self.stats["files_hit"] += 1
@@ -358,6 +375,14 @@ class BaseRansomware:
         self.pause_event.set()
         return True
 
+    def encrypt_file(self, file_path):
+        """Alias used by safety tests; confined overwrite + extension rename."""
+        return self.modify_file(file_path)
+
+    def drop_ransom_note(self, folder):
+        """Alias used by lab integration tests."""
+        return self.drop_note(folder)
+
     def set_speed(self, factor):
         self.stats["speed_factor"] = min(
             5.0,
@@ -465,88 +490,7 @@ FAMILIES = {
 
 
 def list_families():
-    return [
-        {
-            "id": "wannacry",
-            "name": "WannaCry (2017)",
-            "extension": ".WNCRY",
-            "note": "@Please_Read_Me@.txt",
-            "speed": "10-50 files/sec",
-            "style": "Fast full-file simulation",
-        },
-        {
-            "id": "ryuk",
-            "name": "Ryuk (2019)",
-            "extension": ".ryk",
-            "note": "RyukReadMe.html",
-            "speed": "2-5 files/sec",
-            "style": "Slow selective simulation",
-        },
-        {
-            "id": "maze",
-            "name": "Maze (2020)",
-            "extension": ".maze",
-            "note": "MAZE-README.txt",
-            "speed": "Moderate",
-            "style": "Fixed extension simulation",
-        },
-        {
-            "id": "revil",
-            "name": "REvil (2021)",
-            "extension": ".revil",
-            "note": "REVIL-README.txt",
-            "speed": "Fast",
-            "style": "Parallel-style simulation",
-        },
-        {
-            "id": "blackcat",
-            "name": "BlackCat (2022)",
-            "extension": ".abcd",
-            "note": "RECOVER-blackcat-FILES.txt",
-            "speed": "Fast",
-            "style": "Random-extension simulation",
-        },
-        {
-            "id": "alphv",
-            "name": "ALPHV (2023)",
-            "extension": ".alphv",
-            "note": "RECOVER-alphv-FILES.txt",
-            "speed": "Fast",
-            "style": "Catalog training simulation",
-        },
-        {
-            "id": "akira",
-            "name": "Akira (2024)",
-            "extension": ".akira",
-            "note": "AKIRA-README.txt",
-            "speed": "Moderate",
-            "style": "Fixed extension simulation",
-        },
-        {
-            "id": "cl0p",
-            "name": "Cl0p (2025)",
-            "extension": ".clop",
-            "note": "CLOP-README.txt",
-            "speed": "Selective",
-            "style": "Document-style simulation",
-        },
-        {
-            "id": "qilin",
-            "name": "Qilin (2026)",
-            "extension": ".qilin",
-            "note": "QILIN-README.txt",
-            "speed": "Fast",
-            "style": "Fixed extension simulation",
-        },
-        {
-            "id": "lockbit5",
-            "name": "LockBit 5.0",
-            "extension": ".lockbit",
-            "note": "Restore-My-Files.txt",
-            "speed": "Very fast",
-            "style": "High-speed simulation",
-        },
-    ]
+    return catalog_families()
 
 
 _active_engine = None

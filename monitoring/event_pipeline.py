@@ -228,6 +228,9 @@ class EventPipeline:
             if dest and os.path.exists(dest):
                 # Create a copy of the event with dest_path as the file_path
                 # This makes the entropy analyzer read the .locked file
+                self.entropy_analyzer.transfer_history(
+                    event.get('file_path'), dest
+                )
                 renamed_event = dict(event)
                 renamed_event['file_path'] = dest
                 renamed_event['original_path'] = event['file_path']

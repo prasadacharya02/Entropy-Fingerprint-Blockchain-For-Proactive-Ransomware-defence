@@ -48,7 +48,10 @@ class DatabaseSchemaTests(unittest.TestCase):
                 connection.close()
 
             self.assertEqual(count, 1)
-            self.assertTrue({"timestamp", "file_path", "action", "status"} <= columns)
+            self.assertTrue(
+                {"timestamp", "file_path", "action", "status", "requested_action", "outcome"}
+                <= columns
+            )
 
 
 if __name__ == "__main__":
