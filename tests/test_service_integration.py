@@ -35,11 +35,13 @@ class ServiceIntegrationTests(unittest.TestCase):
                 victim_client = victim_app.test_client()
                 dashboard_response = dashboard_client.get("/api/stats")
                 victim_response = victim_client.get("/api/folders")
+                demo = dashboard_client.post("/api/demo/trigger")
 
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertIn("total", dashboard_response.get_json())
         self.assertEqual(victim_response.status_code, 200)
         self.assertIsInstance(victim_response.get_json(), list)
+        self.assertEqual(demo.status_code, 409)
 
     def test_attacker_service_exposes_read_only_status_and_family_catalog(self):
         from attacker_server.app import Handler

@@ -78,20 +78,22 @@ def init_db():
     return initialize_database()
 
 
-def save_to_db(conn, event, action, status, outcome=None):
+def save_to_db(conn, event, action, status, outcome=None, decision=None):
     """Save a processed event to the SQLite database."""
     try:
         proc     = event.get("process") or {}
         pid      = proc.get("pid")      if isinstance(proc, dict) else None
         procname = proc.get("name", "unknown") if isinstance(proc, dict) else "unknown"
         outcome = outcome or status
-
+        decision = decision or {}
+        q_values = decision.get("q_values")
         conn.execute("""
             INSERT INTO events
             (timestamp, file_path, event_type, entropy,
              entropy_delta, pid, process_name, action, status,
-             requested_action, outcome, dry_run)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             requested_action, outcome, dry_run,
+             engine, confidence, explanation, q_values)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             event.get("timestamp", datetime.now().isoformat()),
             event.get("file_path", ""),
@@ -105,6 +107,10 @@ def save_to_db(conn, event, action, status, outcome=None):
             action,
             outcome,
             1 if config.DRY_RUN else 0,
+            decision.get("engine") or "rules",
+            float(decision.get("confidence") or 0.0),
+            decision.get("explanation") or "",
+            json.dumps(q_values) if q_values is not None else None,
         ))
         conn.commit()
     except Exception as e:
@@ -162,7 +168,7 @@ def make_decision(event: dict) -> int:
 def execute_response(action: int,
                      event: dict,
                      bc: BlockchainConnector,
-                     db_conn) -> str:
+                     db_conn, decision: dict | None = None) -> str:
 
     file_path = event.get("file_path", "")
     proc      = event.get("process") or {}
@@ -183,7 +189,7 @@ def execute_response(action: int,
     # ── IGNORE ────────────────────────────────────
     if action == config.ACTION_IGNORE:
         log.info(f"  [OK]     {fname} | H={entropy:.2f}")
-        save_to_db(db_conn, event, action, status, outcome)
+        save_to_db(db_conn, event, action, status, outcome, decision)
         return status
 
     # ── ALERT ─────────────────────────────────────
@@ -211,7 +217,7 @@ def execute_response(action: int,
         elif not killed and q_result != "QUARANTINED":
             outcome = "RESPONSE_PARTIAL"
 
-    save_to_db(db_conn, event, action, status, outcome)
+    save_to_db(db_conn, event, action, status, outcome, decision)
 
     # ── Blockchain log ────────────────────────────
     if action >= config.ACTION_ALERT:
@@ -380,6 +386,8 @@ class DecisionEngine:
                     "action_name" : decision.get("action_name", "IGNORE"),
                     "confidence"  : float(decision.get("confidence", 0.0)),
                     "explanation" : decision.get("explanation", ""),
+                    "q_values"    : decision.get("q_values"),
+                    "engine"      : "dqn",
                 }
             except Exception as e:
                 log.warning(f"[DECISION] DQN inference error ({e}) — "
@@ -391,6 +399,8 @@ class DecisionEngine:
             "action_name" : ACTION_LABELS.get(action, "UNKNOWN"),
             "confidence"  : 1.0 if action >= config.ACTION_ALERT else 0.0,
             "explanation" : "Rule-based detector",
+            "q_values"    : None,
+            "engine"      : "rules",
         }
 
 
@@ -466,7 +476,7 @@ class PipelineRunner:
 
         # ── Execute response ───────────────────────
         status = execute_response(
-            action, event, self.bc, self.db
+            action, event, self.bc, self.db, decision
         )
 
         # ── Update stats ───────────────────────────

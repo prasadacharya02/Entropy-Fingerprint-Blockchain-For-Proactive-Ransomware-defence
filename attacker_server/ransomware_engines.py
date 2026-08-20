@@ -8,8 +8,12 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
+import sys
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+from catalog import list_families as catalog_families
+
 VICTIM_ROOT = (ROOT_DIR / "victim_server" / "user_files").resolve()
 VICTIM_BASE = str(VICTIM_ROOT)
 # Compatibility aliases used by the safety/integration tests.
@@ -486,88 +490,7 @@ FAMILIES = {
 
 
 def list_families():
-    return [
-        {
-            "id": "wannacry",
-            "name": "WannaCry (2017)",
-            "extension": ".WNCRY",
-            "note": "@Please_Read_Me@.txt",
-            "speed": "10-50 files/sec",
-            "style": "Fast full-file simulation",
-        },
-        {
-            "id": "ryuk",
-            "name": "Ryuk (2019)",
-            "extension": ".ryk",
-            "note": "RyukReadMe.html",
-            "speed": "2-5 files/sec",
-            "style": "Slow selective simulation",
-        },
-        {
-            "id": "maze",
-            "name": "Maze (2020)",
-            "extension": ".maze",
-            "note": "MAZE-README.txt",
-            "speed": "Moderate",
-            "style": "Fixed extension simulation",
-        },
-        {
-            "id": "revil",
-            "name": "REvil (2021)",
-            "extension": ".revil",
-            "note": "REVIL-README.txt",
-            "speed": "Fast",
-            "style": "Parallel-style simulation",
-        },
-        {
-            "id": "blackcat",
-            "name": "BlackCat (2022)",
-            "extension": ".abcd",
-            "note": "RECOVER-blackcat-FILES.txt",
-            "speed": "Fast",
-            "style": "Random-extension simulation",
-        },
-        {
-            "id": "alphv",
-            "name": "ALPHV (2023)",
-            "extension": ".alphv",
-            "note": "RECOVER-alphv-FILES.txt",
-            "speed": "Fast",
-            "style": "Catalog training simulation",
-        },
-        {
-            "id": "akira",
-            "name": "Akira (2024)",
-            "extension": ".akira",
-            "note": "AKIRA-README.txt",
-            "speed": "Moderate",
-            "style": "Fixed extension simulation",
-        },
-        {
-            "id": "cl0p",
-            "name": "Cl0p (2025)",
-            "extension": ".clop",
-            "note": "CLOP-README.txt",
-            "speed": "Selective",
-            "style": "Document-style simulation",
-        },
-        {
-            "id": "qilin",
-            "name": "Qilin (2026)",
-            "extension": ".qilin",
-            "note": "QILIN-README.txt",
-            "speed": "Fast",
-            "style": "Fixed extension simulation",
-        },
-        {
-            "id": "lockbit5",
-            "name": "LockBit 5.0",
-            "extension": ".lockbit",
-            "note": "Restore-My-Files.txt",
-            "speed": "Very fast",
-            "style": "High-speed simulation",
-        },
-    ]
+    return catalog_families()
 
 
 _active_engine = None

@@ -182,10 +182,17 @@ def blockchain_status():
         connected = bc.verify_chain()
         count     = bc.get_event_count()
         status = bc.get_status()
+        labels = {
+            "ganache": "Ganache smart contract",
+            "fallback": "Local SQLite ledger (not a blockchain)",
+            "none": "Offline — no ledger",
+        }
+        mode = status.get("mode", "none")
         return jsonify({
             "connected"      : connected,
             "is_blockchain"  : status.get("is_blockchain", connected),
-            "mode"           : status.get("mode", "none"),
+            "mode"           : mode,
+            "mode_label"     : labels.get(mode, mode),
             "tx_count"       : count,
             "address"        : config.CONTRACT_ADDRESS,
             "network"        : config.GANACHE_URL
@@ -296,12 +303,11 @@ def push_updates():
 
 @app.route("/api/dqn/last")
 def dqn_last_decision():
-    """Show reasoning for last threat"""
+    """Show persisted decision metadata, not fabricated scores."""
     try:
         db = get_db()
         row = db.execute("""
             SELECT * FROM events
-            WHERE action >= 1
             ORDER BY id DESC LIMIT 1
         """).fetchone()
         db.close()
@@ -310,14 +316,20 @@ def dqn_last_decision():
             return jsonify({
                 "decision": "STANDBY",
                 "confidence": 0,
+                "engine": "none",
+                "explanation": "",
                 "factors": []
             })
 
+        keys = row.keys()
         entropy = row["entropy"] or 0
         delta   = row["entropy_delta"] or 0
         action  = row["action"] or 0
-        path    = row["file_path"] or ""
-        ext_chg = path.endswith(('.locked', '.encrypted', '.enc'))
+        engine  = row["engine"] if "engine" in keys and row["engine"] else "rules"
+        explanation = row["explanation"] if "explanation" in keys else ""
+        confidence = row["confidence"] if "confidence" in keys and row["confidence"] is not None else 0
+        if isinstance(confidence, float) and confidence <= 1:
+            confidence = round(confidence * 100, 1)
 
         decisions = {
             0: "IGNORE",
@@ -325,43 +337,23 @@ def dqn_last_decision():
             2: "TERMINATE",
             3: "TERMINATE + QUARANTINE"
         }
+        outcome = row["outcome"] if "outcome" in keys and row["outcome"] else row["status"]
 
-        # Factors that determined the decision
         factors = [
-            {
-                "name": "Entropy above threshold (7.5)",
-                "value": f"{entropy:.2f}",
-                "pass": entropy >= 7.5
-            },
-            {
-                "name": "Entropy delta significant",
-                "value": f"{abs(delta):.2f}",
-                "pass": abs(delta) >= 1.5
-            },
-            {
-                "name": "Extension changed",
-                "value": "YES" if ext_chg else "NO",
-                "pass": ext_chg
-            },
-            {
-                "name": "File type suspicious",
-                "value": path.split('.')[-1][:10] if '.' in path else '--',
-                "pass": ext_chg
-            },
-            {
-                "name": "Process unsigned",
-                "value": "UNKNOWN",
-                "pass": True
-            }
+            {"name": "Engine", "value": engine, "pass": engine == "dqn"},
+            {"name": "Requested action", "value": decisions.get(action, "UNKNOWN"), "pass": action >= 1},
+            {"name": "Outcome", "value": outcome or "--", "pass": True},
+            {"name": "Entropy", "value": f"{entropy:.2f}", "pass": entropy >= config.ENTROPY_THRESHOLD},
+            {"name": "Entropy delta", "value": f"{abs(delta):.2f}", "pass": abs(delta) >= config.ENTROPY_DELTA_THRESHOLD},
         ]
-
-        # Confidence based on how many factors triggered
-        passed = sum(1 for f in factors if f["pass"])
-        confidence = min(99, 60 + (passed * 10))
+        if explanation:
+            factors.append({"name": "Explanation", "value": explanation[:80], "pass": True})
 
         return jsonify({
             "decision": decisions.get(action, "UNKNOWN"),
             "confidence": confidence,
+            "engine": engine,
+            "explanation": explanation,
             "factors": factors
         })
     except Exception:
@@ -403,52 +395,11 @@ def flagged_processes():
 
 @app.route("/api/demo/trigger", methods=["POST"])
 def demo_trigger():
-    """Inject fake ransomware events for demo"""
-    try:
-        db = get_db()
-
-        demo_files = [
-            "financial_report_Q3.xlsx",
-            "customer_database.db",
-            "employee_records.docx",
-            "product_designs.pdf",
-            "source_code.zip"
-        ]
-
-        base_time = datetime.now()
-
-        for i, fname in enumerate(demo_files):
-            # Space events 1 second apart for a realistic timeline
-            event_time = base_time + timedelta(seconds=i)
-            fake_path  = f"C:\\Users\\demo\\Documents\\{fname}.locked"
-            entropy    = round(random.uniform(7.85, 7.99), 4)
-            delta      = round(random.uniform(2.5, 3.5), 4)
-            fake_pid   = random.randint(1000, 9999)
-
-            db.execute("""
-                INSERT INTO events
-                (timestamp, file_path, event_type, entropy, entropy_delta,
-                 pid, process_name, action, status)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            """, (
-                event_time.isoformat(),
-                fake_path,
-                "RENAMED",
-                entropy,
-                delta,
-                fake_pid,
-                "ransomware_demo.exe",
-                3,
-                "TERMINATED+QUARANTINED"
-            ))
-
-        db.commit()
-        db.close()
-
-        return jsonify({"status": "ok", "injected": len(demo_files)})
-    except Exception:
-        log.exception("Demo trigger API failed")
-        return _api_error("demo trigger failed")
+    """Refuse fabricated events; the attacker lab generates real fixture activity."""
+    return jsonify({
+        "status": "rejected",
+        "error": "synthetic event injection is disabled; use the attacker console",
+    }), 409
 
 
 @app.route("/api/threat-level")

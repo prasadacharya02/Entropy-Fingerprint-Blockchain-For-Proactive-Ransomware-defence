@@ -27,6 +27,16 @@ contract ThreatLogger {
 
     constructor() { owner = msg.sender; }
 
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function transferOwnership(address nextOwner) public onlyOwner {
+        require(nextOwner != address(0), "zero owner");
+        owner = nextOwner;
+    }
+
     function logThreat(
         string memory fingerprint,
         string memory threatType,
@@ -36,7 +46,7 @@ contract ThreatLogger {
         string memory filePath,
         string memory actionTaken,
         string memory status
-    ) public returns (uint256) {
+    ) public onlyOwner returns (uint256) {
         uint256 id = events.length;
         events.push(ThreatEvent(
             id, fingerprint, threatType, block.timestamp,
