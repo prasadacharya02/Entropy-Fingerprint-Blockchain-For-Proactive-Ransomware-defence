@@ -78,18 +78,20 @@ def init_db():
     return initialize_database()
 
 
-def save_to_db(conn, event, action, status):
+def save_to_db(conn, event, action, status, outcome=None):
     """Save a processed event to the SQLite database."""
     try:
         proc     = event.get("process") or {}
         pid      = proc.get("pid")      if isinstance(proc, dict) else None
         procname = proc.get("name", "unknown") if isinstance(proc, dict) else "unknown"
+        outcome = outcome or status
 
         conn.execute("""
             INSERT INTO events
             (timestamp, file_path, event_type, entropy,
-             entropy_delta, pid, process_name, action, status)
-            VALUES (?,?,?,?,?,?,?,?,?)
+             entropy_delta, pid, process_name, action, status,
+             requested_action, outcome, dry_run)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             event.get("timestamp", datetime.now().isoformat()),
             event.get("file_path", ""),
@@ -99,7 +101,10 @@ def save_to_db(conn, event, action, status):
             pid,
             procname,
             action,
-            status
+            status,
+            action,
+            outcome,
+            1 if config.DRY_RUN else 0,
         ))
         conn.commit()
     except Exception as e:
@@ -173,31 +178,40 @@ def execute_response(action: int,
     file_hash = event.get("file_hash", "")
     status    = ACTION_LABELS.get(action, "UNKNOWN")
     fname     = os.path.basename(file_path)
+    outcome   = status
 
     # ── IGNORE ────────────────────────────────────
     if action == config.ACTION_IGNORE:
         log.info(f"  [OK]     {fname} | H={entropy:.2f}")
-        save_to_db(db_conn, event, action, status)
+        save_to_db(db_conn, event, action, status, outcome)
         return status
 
     # ── ALERT ─────────────────────────────────────
     if action == config.ACTION_ALERT:
         log.warning(f"  [ALERT]  {fname} | H={entropy:.2f}")
-        save_to_db(db_conn, event, action, status)
+        outcome = status
 
     # ── TERMINATE ─────────────────────────────────
     if action == config.ACTION_TERMINATE:
         log.warning(f"  [KILL]   {fname} | H={entropy:.2f}")
-        _terminate_process(pid, procname, proc)
-        save_to_db(db_conn, event, action, status)
+        killed = _terminate_process(pid, procname, proc)
+        outcome = "DRY_RUN_TERMINATE" if config.DRY_RUN else (
+            "TERMINATED" if killed else "TERMINATE_REFUSED"
+        )
 
     # ── TERMINATE + QUARANTINE ────────────────────
     if action == config.ACTION_TERMINATE_QUARANTINE:
         log.warning(f"  [THREAT] {fname} | H={entropy:.2f}")
-        _terminate_process(pid, procname, proc)
+        killed = _terminate_process(pid, procname, proc)
         q_result = _quarantine_file(file_path, event=event, action=action)
         log.warning(f"  [ACTION] Quarantine result: {q_result}")
-        save_to_db(db_conn, event, action, status)
+        outcome = q_result if isinstance(q_result, str) else status
+        if config.DRY_RUN:
+            outcome = "DRY_RUN_QUARANTINE"
+        elif not killed and q_result != "QUARANTINED":
+            outcome = "RESPONSE_PARTIAL"
+
+    save_to_db(db_conn, event, action, status, outcome)
 
     # ── Blockchain log ────────────────────────────
     if action >= config.ACTION_ALERT:
@@ -426,6 +440,7 @@ class PipelineRunner:
         print(f"  DB         : {config.DB_PATH}")
         print(f"  AI Engine  : "
               f"{'DQN (trained)' if self.engine.using_dqn else 'Rule-based'}")
+        print(f"  Dry-run    : {config.DRY_RUN}")
         print("=" * 60)
         print()
 

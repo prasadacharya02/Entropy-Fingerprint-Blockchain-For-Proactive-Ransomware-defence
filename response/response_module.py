@@ -135,6 +135,7 @@ class ProcessTerminator:
             'action'      : 'terminate',
             'message'     : '',
             'timestamp'   : datetime.now().isoformat(),
+            'dry_run'     : bool(config.DRY_RUN),
         }
 
         # Refuse incomplete identities. A best-effort process guess must
@@ -164,6 +165,12 @@ class ProcessTerminator:
                                 f'is whitelisted')
             log.warning(f"[SAFETY] Refused to kill "
                        f"whitelisted process: {process_name}")
+            return result
+
+        if config.DRY_RUN:
+            result['success'] = True
+            result['message'] = 'Dry-run: termination simulated, process left running'
+            log.info('[DRY-RUN] Would terminate PID %s (%s)', pid, process_name)
             return result
 
         # Safety check 4: Don't kill already terminated
@@ -295,11 +302,18 @@ class FileQuarantine:
             'fingerprint'     : None,
             'message'         : '',
             'timestamp'       : datetime.now().isoformat(),
+            'dry_run'         : bool(config.DRY_RUN),
         }
 
         if not os.path.exists(file_path):
             result['message'] = 'File not found (may be deleted)'
             log.warning(f"[QUARANTINE] File not found: {file_path}")
+            return result
+
+        if config.DRY_RUN:
+            result['success'] = True
+            result['message'] = 'Dry-run: quarantine simulated, file left in place'
+            log.info('[DRY-RUN] Would quarantine %s', file_path)
             return result
 
         with self.lock:

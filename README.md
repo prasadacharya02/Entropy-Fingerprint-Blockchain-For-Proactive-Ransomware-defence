@@ -101,6 +101,7 @@ Copy `.env.example` to `.env`. Important settings include:
 - `ENTROPY_THRESHOLD`, `ENTROPY_DELTA_THRESHOLD`
 - `ENTROPY_GANACHE_URL`, `ENTROPY_CONTRACT_ADDRESS`
 - `ENTROPY_BLOCKCHAIN_FALLBACK`
+- `ENTROPY_DRY_RUN` (default `true`: terminate/quarantine are simulated)
 
 Relative paths are resolved from the repository root. Do not commit `.env`; it
 is intentionally ignored.

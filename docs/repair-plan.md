@@ -33,9 +33,9 @@ working tree, automated checks, and documented behavior.
 
 ## Day 3 — Safe response and process attribution
 
-- Default destructive responses to dry-run.
-- Replace "most recent process" attribution with controlled, verified identity.
-- Record requested actions separately from actual outcomes.
+- Default destructive responses to dry-run (`ENTROPY_DRY_RUN=true`).
+- Replace "most recent process" attribution with open-file verification; guesses stay unverified.
+- Record requested actions separately from actual outcomes (`requested_action`, `outcome`, `dry_run`).
 - Add termination and quarantine safety tests.
 
 ## Day 4 — Detection and event-pipeline correctness
