@@ -201,6 +201,10 @@ def send_html(handler):
         "__ATTACKER_URL__",
         attacker_url,
     )
+    html = html.replace(
+        "__CONTROL_TOKEN__",
+        config.CONTROL_TOKEN or "",
+    )
 
     body = html.encode("utf-8")
 
