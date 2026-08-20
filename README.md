@@ -143,9 +143,9 @@ The Day 1 foundation tests use only Python's standard library:
 python -m unittest discover -s tests -v
 ```
 
-They cover core entropy math, deterministic fixture generation, configuration
-validation, JSON assets, and health-check exit behavior. Later repair days will
-add integration, response-safety, dashboard, model, and blockchain tests.
+They cover entropy math, fixtures, configuration, response safety, training
+schema, catalog/contract access, and service health. Optional PyTorch tests
+skip when torch is not installed.
 
 ## Generated state
 
