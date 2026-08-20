@@ -21,7 +21,7 @@ sys.path.insert(0, BASE_DIR)
 import config
 from storage.database import connect, init_db as initialize_database
 from blockchain.connector import BlockchainConnector
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
 # ── App Setup ──────────────────────────────────────
@@ -73,7 +73,28 @@ ACTION_MAP = {
 
 @app.route("/")
 def index():
+    return render_template("platform.html")
+
+
+@app.route("/legacy")
+def legacy_dashboard():
     return render_template("dashboard.html")
+
+
+@app.route("/api/platform")
+def platform():
+    status = bc.get_status()
+    return jsonify({
+        "product": "ENTROPY",
+        "tagline": "Entropy fingerprinting with an auditable response ledger",
+        "edition": "Command Platform",
+        "version": "2.0.0",
+        "dry_run": bool(config.DRY_RUN),
+        "watch_folders": config.WATCH_FOLDERS,
+        "ledger_mode": status.get("mode"),
+        "is_blockchain": status.get("is_blockchain", False),
+        "positioning": "Purple-team range for SOC training — not an EDR replacement",
+    })
 
 
 @app.route("/api/health")
@@ -443,6 +464,66 @@ def threat_level():
     except Exception:
         log.exception("Threat level API failed")
         return _api_error("threat level unavailable")
+
+
+@app.route("/api/folders")
+def platform_folders():
+    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
+    import importlib
+    victim_app = importlib.import_module("victim_server.app")
+    with victim_app.app.test_request_context():
+        response = victim_app.get_folders()
+    return response
+
+
+@app.route("/api/lab/families")
+def lab_families():
+    from catalog import list_families
+    return jsonify(list_families())
+
+
+@app.route("/api/lab/status")
+def lab_status():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    from attacker_server.app import victim_snapshot
+    stats = engines.current_stats()
+    stats["victim"] = victim_snapshot()
+    stats["dry_run"] = bool(config.DRY_RUN)
+    return jsonify(stats)
+
+
+@app.route("/api/lab/launch", methods=["POST"])
+def lab_launch():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    payload = request.get_json(silent=True) or {}
+    family = str(payload.get("family") or "").strip().lower()
+    if family not in engines.FAMILIES:
+        return jsonify({"ok": False, "error": "unknown family"}), 400
+    ok, engine = engines.start_attack(family)
+    if not ok:
+        return jsonify({"ok": False, "error": "engine refused to start"}), 500
+    return jsonify({"ok": True, "family": engine.name, "stats": engine.get_stats()})
+
+
+@app.route("/api/lab/stop", methods=["POST"])
+def lab_stop():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    return jsonify({"ok": True, "stopped": bool(engines.stop_attack())})
+
+
+@app.route("/api/lab/reset", methods=["POST"])
+def lab_reset():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    engines.stop_attack()
+    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
+    from create_fake_files import restore_all_files
+    restore_all_files()
+    from attacker_server.app import victim_snapshot
+    return jsonify({"ok": True, "victim": victim_snapshot()})
 
 
 # ═══════════════════════════════════════════════════

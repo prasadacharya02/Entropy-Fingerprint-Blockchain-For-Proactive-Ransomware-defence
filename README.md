@@ -1,3 +1,11 @@
+# ENTROPY Command Platform
+
+Purple-team **ransomware range**: Shannon entropy fingerprints, corroborating
+behavior, dry-run response, and an auditable ledger. Open
+[http://127.0.0.1:5000](http://127.0.0.1:5000) after `python lab.py`.
+
+This is a training and detection lab — not a replacement for endpoint security.
+
 # ENTROPY Fingerprint Blockchain
 
 ENTROPY is a **controlled ransomware-detection lab**. It observes generated
