@@ -352,6 +352,14 @@ class EntropyAnalyzer:
             'error'           : entropy_data.get('error', None),
         }
 
+    def transfer_history(self, source_path: str, dest_path: str) -> None:
+        """Keep entropy history across ransomware-style renames."""
+        if not source_path or not dest_path or source_path == dest_path:
+            return
+        history = self.entropy_history.get(source_path)
+        if history:
+            self.entropy_history[dest_path] = list(history)
+
     def get_history(self, file_path: str) -> list:
         """Get entropy history for a specific file."""
         return list(self.entropy_history.get(file_path, []))

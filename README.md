@@ -22,8 +22,15 @@ Ganache smart contract.
 | Fixture generator | Creates a clean fake user directory | `python victim_server/create_fake_files.py --clean` |
 | Training-data generator | Creates synthetic DQN samples | `python data/ransomware_simulator.py` |
 
-The services are still separate processes. A unified launcher and direct lab
-integration are planned for repair Day 2; see `docs/repair-plan.md`.
+Start every service with one command:
+
+```bash
+python lab.py
+```
+
+That launcher watches `victim_server/user_files`, binds the dashboard for local
+preview, and stops all child processes on Ctrl+C. Individual processes can still
+be started as shown below.
 
 ## Architecture
 

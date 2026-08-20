@@ -76,6 +76,11 @@ def index():
     return render_template("dashboard.html")
 
 
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok", "service": "dashboard"})
+
+
 @app.route("/api/stats")
 def stats():
     try:

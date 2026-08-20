@@ -253,6 +253,10 @@ def control_authorized(handler):
         return False
 
 
+# Compatibility alias expected by tests/test_control_security.py
+_control_authorized = control_authorized
+
+
 def send_forbidden(handler):
     send_json(
         handler,

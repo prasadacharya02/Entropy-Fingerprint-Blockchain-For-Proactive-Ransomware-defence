@@ -27,7 +27,7 @@ working tree, automated checks, and documented behavior.
 ## Day 2 — Unified application integration
 
 - Select one orchestrator and retire duplicate execution paths.
-- Add one launcher for pipeline, dashboard, attacker, and victim services.
+- Add one launcher for pipeline, dashboard, attacker, and victim services (`lab.py`).
 - Connect the controlled victim fixture directory to the detector.
 - Add graceful startup/shutdown and integration tests.
 

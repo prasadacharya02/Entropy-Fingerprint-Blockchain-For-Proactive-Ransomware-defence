@@ -12,14 +12,21 @@ from threading import Event, Lock, Thread
 ROOT_DIR = Path(__file__).resolve().parent.parent
 VICTIM_ROOT = (ROOT_DIR / "victim_server" / "user_files").resolve()
 VICTIM_BASE = str(VICTIM_ROOT)
+# Compatibility aliases used by the safety/integration tests.
+_VICTIM_ROOT = VICTIM_ROOT
+
+
+def _victim_root() -> Path:
+    return Path(_VICTIM_ROOT).resolve()
 
 
 def safe_path(path, allow_root=False):
     try:
+        root = _victim_root()
         candidate = Path(path).resolve(strict=False)
-        candidate.relative_to(VICTIM_ROOT)
+        candidate.relative_to(root)
 
-        if not allow_root and candidate == VICTIM_ROOT:
+        if not allow_root and candidate == root:
             return None
 
         return candidate
@@ -27,8 +34,14 @@ def safe_path(path, allow_root=False):
         return None
 
 
+def _confined_path(path, allow_root=False):
+    """Return a path only when it stays inside the victim fixture tree."""
+    return safe_path(path, allow_root=allow_root)
+
+
 def victim_ready():
-    return VICTIM_ROOT.is_dir() and not VICTIM_ROOT.is_symlink()
+    root = _victim_root()
+    return root.is_dir() and not root.is_symlink()
 
 
 class BaseRansomware:
@@ -95,13 +108,13 @@ class BaseRansomware:
         if not victim_ready():
             return files, folders
 
-        for directory, dirnames, filenames in os.walk(VICTIM_ROOT):
+        for directory, dirnames, filenames in os.walk(_victim_root()):
             safe_directory = safe_path(directory, allow_root=True)
 
             if safe_directory is None:
                 continue
 
-            folders.append(safe_directory)
+            folders.append(str(safe_directory))
 
             for filename in filenames:
                 candidate = safe_path(
@@ -109,7 +122,7 @@ class BaseRansomware:
                 )
 
                 if candidate is not None and candidate.is_file():
-                    files.append(candidate)
+                    files.append(str(candidate))
 
         return files, folders
 
@@ -220,7 +233,7 @@ class BaseRansomware:
             if new_path is None:
                 return False
 
-            file_path.rename(new_path)
+            Path(file_path).rename(new_path)
 
             with self.lock:
                 self.stats["files_hit"] += 1
@@ -357,6 +370,14 @@ class BaseRansomware:
         self.stats["phase"] = "MODIFYING FILES"
         self.pause_event.set()
         return True
+
+    def encrypt_file(self, file_path):
+        """Alias used by safety tests; confined overwrite + extension rename."""
+        return self.modify_file(file_path)
+
+    def drop_ransom_note(self, folder):
+        """Alias used by lab integration tests."""
+        return self.drop_note(folder)
 
     def set_speed(self, factor):
         self.stats["speed_factor"] = min(

@@ -488,8 +488,11 @@ class PipelineRunner:
 
 if __name__ == "__main__":
 
-    import colorama
-    colorama.init()
+    try:
+        import colorama
+        colorama.init()
+    except ImportError:
+        pass
 
     runner = PipelineRunner()
     runner.start()
