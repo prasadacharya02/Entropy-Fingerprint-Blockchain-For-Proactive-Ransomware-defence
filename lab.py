@@ -28,6 +28,8 @@ def _env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("ENTROPY_WATCH_FOLDERS", "victim_server/user_files")
     env.setdefault("ENTROPY_DASHBOARD_HOST", "0.0.0.0")
+    env.setdefault("ENTROPY_DRY_RUN", "true")
+    env.setdefault("ENTROPY_CONTROL_TOKEN", "entropy-lab")
     env.setdefault("PYTHONUNBUFFERED", "1")
     return env
 
@@ -38,11 +40,12 @@ def main() -> int:
         subprocess.check_call([PYTHON, str(fixtures), "--clean"], cwd=ROOT)
 
     print("=" * 60)
-    print("  ENTROPY lab launcher")
-    print("  Dashboard : http://127.0.0.1:5000")
+    print("  ENTROPY Command Platform")
+    print("  SOC       : http://127.0.0.1:5000")
     print("  Attacker  : http://127.0.0.1:8001")
-    print("  Victim    : http://127.0.0.1:8002")
+    print("  Victim PC : http://127.0.0.1:8002")
     print("  Watching  : victim_server/user_files")
+    print("  Dry-run   : on  |  control token set for remote lab UI")
     print("=" * 60)
 
     env = _env()

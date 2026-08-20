@@ -50,9 +50,7 @@ def get_folder_stats(folder_path: str):
         except OSError:
             continue
         extension = os.path.splitext(filename)[1].lower()
-        if extension in (".wncry", ".wncryt", ".ryk", ".lockbit", ".abcd"):
-            encrypted += 1
-        elif filename.startswith("RECOVER-") or "READ_ME" in filename:
+        if extension in LOCK_EXTENSIONS or family_from_filename(filename):
             encrypted += 1
     return total_files, total_size, encrypted
 def format_size(size_bytes: int) -> str:
@@ -85,6 +83,10 @@ def _ransom_note_family(filename: str):
 @app.route("/")
 def index():
     return render_template("victim.html")
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok", "service": "victim"})
 @app.route("/api/folders")
 def get_folders():
     folders = []
