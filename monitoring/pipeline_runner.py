@@ -17,6 +17,7 @@ import json
 import hashlib
 import logging
 from datetime import datetime
+import threading
 from threading import Thread
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,9 +25,10 @@ import config
 
 from monitoring.event_pipeline   import EventPipeline
 from blockchain.connector        import BlockchainConnector
-from response.response_module     import ProcessTerminator
+from response.response_module     import FileQuarantine, ProcessTerminator
+from response.backup_manager     import BackupManager
+from response.forensic_report    import generate_report
 from storage.database             import init_db as initialize_database
-from storage.hashing               import sha256_file
 
 # Logger must exist before the optional DQN import: the fallback path logs
 # missing PyTorch/model errors during module import.
@@ -78,7 +80,33 @@ def init_db():
     return initialize_database()
 
 
-def save_to_db(conn, event, action, status, outcome=None, decision=None):
+# ============================================================
+# FEDERATED THREAT-FINGERPRINT EXCHANGE
+# ============================================================
+
+_EXCHANGE = None
+_EXCHANGE_LOCK = threading.Lock()
+
+
+def get_exchange():
+    """This node's view of the shared threat-fingerprint exchange.
+
+    Lazy, so the store is created only when a confirmed threat is
+    actually shared (and so tests can inject a temp store).
+    """
+    global _EXCHANGE
+    if _EXCHANGE is None:
+        with _EXCHANGE_LOCK:
+            if _EXCHANGE is None:
+                from blockchain.fingerprint_exchange import FingerprintExchange
+                _EXCHANGE = FingerprintExchange()
+                log.info("[EXCHANGE] Fingerprint exchange ready "
+                         f"(node={_EXCHANGE.node_id})")
+    return _EXCHANGE
+
+
+def save_to_db(conn, event, action, status, outcome=None, decision=None,
+               restore_result=None):
     """Save a processed event to the SQLite database."""
     try:
         proc     = event.get("process") or {}
@@ -91,9 +119,9 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None):
             INSERT INTO events
             (timestamp, file_path, event_type, entropy,
              entropy_delta, pid, process_name, action, status,
-             requested_action, outcome, dry_run,
+             requested_action, outcome, restore_result, dry_run,
              engine, confidence, explanation, q_values)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             event.get("timestamp", datetime.now().isoformat()),
             event.get("file_path", ""),
@@ -106,6 +134,7 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None):
             status,
             action,
             outcome,
+            restore_result,
             1 if config.DRY_RUN else 0,
             decision.get("engine") or "rules",
             float(decision.get("confidence") or 0.0),
@@ -123,6 +152,13 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None):
 # ============================================================
 
 def make_decision(event: dict) -> int:
+
+    # ── Hard-confirmation signals ────────────────────────────
+    # A dropped ransom note, or an attacker destroying the recovery
+    # capability (backup store / Shadow Copies / services), is a
+    # confirmed incident on its own — no entropy signal required.
+    if event.get("ransom_note") or event.get("defense_tamper"):
+        return config.ACTION_TERMINATE_QUARANTINE
 
     entropy   = event.get("entropy_overall") or 0.0
     delta     = abs(event.get("entropy_delta") or 0.0)
@@ -168,7 +204,8 @@ def make_decision(event: dict) -> int:
 def execute_response(action: int,
                      event: dict,
                      bc: BlockchainConnector,
-                     db_conn, decision: dict | None = None) -> str:
+                     db_conn, decision: dict | None = None,
+                     backup: "BackupManager | None" = None) -> str:
 
     file_path = event.get("file_path", "")
     proc      = event.get("process") or {}
@@ -186,7 +223,11 @@ def execute_response(action: int,
     fname     = os.path.basename(file_path)
     outcome   = status
 
-    # ── IGNORE ────────────────────────────────────
+    terminate_result  = None
+    quarantine_result = None
+    restore_result    = None
+
+    # ── IGNORE ───────────────────────────────────
     if action == config.ACTION_IGNORE:
         log.info(f"  [OK]     {fname} | H={entropy:.2f}")
         save_to_db(db_conn, event, action, status, outcome, decision)
@@ -201,6 +242,7 @@ def execute_response(action: int,
     if action == config.ACTION_TERMINATE:
         log.warning(f"  [KILL]   {fname} | H={entropy:.2f}")
         killed = _terminate_process(pid, procname, proc)
+        terminate_result = "TERMINATED" if killed else "TERMINATE_REFUSED"
         outcome = "DRY_RUN_TERMINATE" if config.DRY_RUN else (
             "TERMINATED" if killed else "TERMINATE_REFUSED"
         )
@@ -209,15 +251,67 @@ def execute_response(action: int,
     if action == config.ACTION_TERMINATE_QUARANTINE:
         log.warning(f"  [THREAT] {fname} | H={entropy:.2f}")
         killed = _terminate_process(pid, procname, proc)
-        q_result = _quarantine_file(file_path, event=event, action=action)
-        log.warning(f"  [ACTION] Quarantine result: {q_result}")
-        outcome = q_result if isinstance(q_result, str) else status
+        terminate_result = "TERMINATED" if killed else "TERMINATE_REFUSED"
+        quarantine_result = _quarantine_file(file_path, event=event, action=action)
+        log.warning(f"  [ACTION] Quarantine result: {quarantine_result}")
+        outcome = quarantine_result if isinstance(quarantine_result, str) else status
         if config.DRY_RUN:
             outcome = "DRY_RUN_QUARANTINE"
-        elif not killed and q_result != "QUARANTINED":
+        elif not killed and quarantine_result != "QUARANTINED":
             outcome = "RESPONSE_PARTIAL"
 
-    save_to_db(db_conn, event, action, status, outcome, decision)
+        # ── RECOVERY: restore the last known-good version ──
+        # Dry-run: the lab attack engine is one-shot, so simulating the
+        # restore is safe. Live mode: only restore once the file is
+        # contained (quarantined or already gone) so the attacker cannot
+        # re-encrypt the restored copy in place.
+        if backup is not None:
+            contained = config.DRY_RUN or quarantine_result in (
+                "QUARANTINED", "FILE_ALREADY_MOVED", "DRY_RUN_QUARANTINE"
+            )
+            if not contained:
+                restore_result = "RESTORE_SKIPPED"
+                log.warning("  [RESTORE] Skipped: file not contained "
+                            "(quarantine failed)")
+            else:
+                try:
+                    r = backup.restore(file_path, event=event)
+                    if r.get("success") and r.get("restored"):
+                        restore_result = "RESTORED"
+                    elif r.get("success") and r.get("dry_run"):
+                        restore_result = "DRY_RUN_RESTORE"
+                    else:
+                        restore_result = "RESTORE_FAILED"
+                    log.warning(f"  [RESTORE] {restore_result}: "
+                                f"{r.get('message')}")
+                except Exception as e:
+                    restore_result = "RESTORE_FAILED"
+                    log.error(f"  [RESTORE] {e}")
+        if restore_result:
+            outcome = f"{outcome}+{restore_result}"
+
+    # ── FORENSIC REPORT for every incident ────────
+    if action >= config.ACTION_ALERT:
+        try:
+            report_path = generate_report(
+                event, decision or {}, {
+                    "requested_action":     action,
+                    "outcome":              outcome,
+                    "dry_run":              bool(config.DRY_RUN),
+                    "terminate":            terminate_result,
+                    "quarantine":           quarantine_result,
+                    "restore":              restore_result,
+                    "blockchain_reference": file_hash or None,
+                }
+            )
+            if report_path:
+                log.info(f"  [REPORT] Forensic report → "
+                         f"{os.path.basename(report_path)}")
+        except Exception as e:
+            log.error(f"  [REPORT] Generation failed: {e}")
+
+    save_to_db(db_conn, event, action, status, outcome, decision,
+               restore_result)
 
     # ── Blockchain log ────────────────────────────
     if action >= config.ACTION_ALERT:
@@ -239,7 +333,32 @@ def execute_response(action: int,
         except Exception as e:
             log.error(f"  [BLOCKCHAIN] Failed: {e}")
 
-    return status
+    # ── Federated exchange: share the confirmed threat ──────
+    # Only CONFIRMED threats (quarantine) are shared — an alert is a
+    # suspicion, not a shared fact. And only when we hold the file's
+    # real content hash: a path hash or a missing file (e.g. the
+    # already-deleted target of a defense-tamper event) must never be
+    # published as a threat fingerprint.
+    if action == config.ACTION_TERMINATE_QUARANTINE and file_hash:
+        try:
+            rec = get_exchange().register(
+                file_hash,
+                threat_type="ransomware",
+                file_extension=os.path.splitext(file_path)[1].lower(),
+                file_size=event.get("file_size") or 0,
+                evidence=(decision or {}).get("explanation", ""),
+            )
+            log.warning(
+                f"  [EXCHANGE] fingerprint {file_hash[:12]}… shared "
+                f"(sightings={rec['sightings']}, "
+                f"sources={len(rec['sources'])})"
+            )
+        except Exception as e:
+            log.error(f"  [EXCHANGE] Registration failed: {e}")
+
+    # Return the detailed outcome (e.g. "DRY_RUN_QUARANTINE+DRY_RUN_RESTORE"),
+    # not just the action label — callers and the dashboard rely on it.
+    return outcome
 
 
 def _terminate_process(pid, procname: str, process_info: dict | None = None):
@@ -280,62 +399,38 @@ def _terminate_process(pid, procname: str, process_info: dict | None = None):
 
 
 def _quarantine_file(file_path: str, event: dict | None = None,
-                     action: int | None = None):
-    """Move a suspicious file and persist a complete sidecar record."""
-    import shutil
-    import stat
+                     action: int | None = None) -> str:
+    """Quarantine a suspicious file via the shared response layer.
 
-    if not os.path.isfile(file_path):
-        log.warning(f"  [QUARANTINE] Already moved: {os.path.basename(file_path)}")
-        return "FILE_ALREADY_MOVED"
-
+    Uses FileQuarantine (response/response_module.py) so the pipeline and
+    the response tests share one dry-run-aware implementation. In dry-run
+    mode the file is NEVER moved; the DRY_RUN outcome is recorded by the
+    caller. Returns a string status: QUARANTINED, DRY_RUN_QUARANTINE,
+    FILE_ALREADY_MOVED, PERMISSION_DENIED, or FAILED.
+    """
     try:
-        os.makedirs(config.QUARANTINE_DIR, exist_ok=True)
-        file_stat = os.stat(file_path)
-        sha256 = sha256_file(file_path)
-        original_path = os.path.abspath(file_path)
-        original_name = os.path.basename(file_path)
-        q_name = f"{sha256[:16]}_{original_name}"
-        q_path = os.path.join(config.QUARANTINE_DIR, q_name)
-
-        if os.path.exists(q_path):
-            q_name = f"{sha256[:16]}_{int(time.time_ns())}_{original_name}"
-            q_path = os.path.join(config.QUARANTINE_DIR, q_name)
-
-        shutil.move(file_path, q_path)
-        os.chmod(q_path, stat.S_IRUSR)
-
-        metadata = {
-            "schema_version": 1,
-            "quarantined_at": datetime.now().isoformat(),
-            "original_path": original_path,
-            "original_name": original_name,
-            "quarantine_path": os.path.abspath(q_path),
-            "fingerprint": sha256,
-            "size_bytes": file_stat.st_size,
-            "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
-            "mode": stat.S_IMODE(file_stat.st_mode),
-            "action": action,
-            "event": event or {},
-        }
-        metadata_path = q_path + ".meta.json"
-        temporary_path = metadata_path + ".tmp"
-        with open(temporary_path, "w", encoding="utf-8") as handle:
-            json.dump(metadata, handle, indent=2, sort_keys=True, default=str)
-            handle.write("\n")
-        os.replace(temporary_path, metadata_path)
-        os.chmod(metadata_path, stat.S_IRUSR)
-
-        log.warning(f"  [QUARANTINE] ✅ → {q_name}")
-        return "QUARANTINED"
-
-    except PermissionError:
-        log.error("  [QUARANTINE] ❌ Permission denied")
-        return "PERMISSION_DENIED"
-
+        result = FileQuarantine().quarantine(file_path, event=event)
     except Exception as e:
         log.error(f"  [QUARANTINE] ❌ {e}")
         return "FAILED"
+
+    if config.DRY_RUN and result.get("success"):
+        log.info("  [DRY-RUN] Quarantine simulated — file left in place")
+        return "DRY_RUN_QUARANTINE"
+
+    if not result.get("success"):
+        message = (result.get("message") or "").lower()
+        if "not found" in message:
+            log.warning(f"  [QUARANTINE] Already moved: {os.path.basename(file_path)}")
+            return "FILE_ALREADY_MOVED"
+        if "permission" in message or "denied" in message:
+            log.error("  [QUARANTINE] ❌ Permission denied")
+            return "PERMISSION_DENIED"
+        log.error(f"  [QUARANTINE] ❌ {result.get('message')}")
+        return "FAILED"
+
+    log.warning(f"  [QUARANTINE] ✅ → {os.path.basename(result.get('quarantine_path') or file_path)}")
+    return "QUARANTINED"
 
 
 # ============================================================
@@ -394,11 +489,22 @@ class DecisionEngine:
                             f"falling back to rules")
 
         action = make_decision(event)
+        explanation = "Rule-based detector"
+        if event.get("ransom_note"):
+            explanation += " | RANSOM NOTE: " + "; ".join(
+                event.get("ransom_note_evidence") or []
+            )
+        elif event.get("defense_tamper"):
+            explanation += " | DEFENSE TAMPER: " + "; ".join(
+                event.get("defense_tamper_evidence") or []
+            )
+        elif event.get("reason"):
+            explanation += f" | {event['reason']}"
         return {
             "action"      : action,
             "action_name" : ACTION_LABELS.get(action, "UNKNOWN"),
             "confidence"  : 1.0 if action >= config.ACTION_ALERT else 0.0,
-            "explanation" : "Rule-based detector",
+            "explanation" : explanation,
             "q_values"    : None,
             "engine"      : "rules",
         }
@@ -429,6 +535,9 @@ class PipelineRunner:
         # Blockchain
         self.bc = BlockchainConnector()
 
+        # Backup & recovery store
+        self.backup = BackupManager()
+
         # Stats
         self.stats = {
             "total"      : 0,
@@ -454,6 +563,21 @@ class PipelineRunner:
         print("=" * 60)
         print()
 
+        # ── Seed the backup store with the pre-watch state of the
+        # protected estate so files that existed before monitoring
+        # started are restorable after an attack. ──
+        try:
+            baselined = 0
+            for folder in config.WATCH_FOLDERS:
+                baselined += self.backup.snapshot_directory(
+                    folder, source="startup_baseline"
+                )
+            backup_stats = self.backup.stats()
+            log.info(f"[RUNNER] Backup baseline: {baselined} file(s) captured "
+                     f"({backup_stats['files_restorable']} restorable)")
+        except Exception as e:
+            log.warning(f"[RUNNER] Backup baseline failed: {e}")
+
         # Register our callback with the pipeline
         self.pipeline.register_ai_callback(self._on_analyzed_event)
 
@@ -470,13 +594,25 @@ class PipelineRunner:
         """
         self.stats["total"] += 1
 
+        # ── Capture the current file state for recovery ──
+        # Additive (reads the file, writes only to backup_storage/),
+        # so it runs in every mode. Clean versions (entropy below
+        # threshold) become restore candidates; dirty ones are kept
+        # for forensics but are never restorable.
+        file_path = event.get("file_path", "")
+        if file_path:
+            try:
+                self.backup.capture(file_path, event=event)
+            except Exception as e:
+                log.warning(f"[BACKUP] Capture failed for {file_path}: {e}")
+
         # ── Make decision ──────────────────────────
         decision = self.engine.decide(event)
         action   = decision["action"]
 
         # ── Execute response ───────────────────────
         status = execute_response(
-            action, event, self.bc, self.db, decision
+            action, event, self.bc, self.db, decision, backup=self.backup
         )
 
         # ── Update stats ───────────────────────────

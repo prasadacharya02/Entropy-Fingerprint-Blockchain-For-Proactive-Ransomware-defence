@@ -32,6 +32,9 @@ Thumbs.db
 *.db-wal
 logs/
 quarantine_storage/
+backup_storage/
+reports/
+benchmark/results/
 
 # Generated lab and ML artifacts
 victim_server/user_files/

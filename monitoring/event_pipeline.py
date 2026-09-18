@@ -33,6 +33,7 @@ import config
 
 from monitoring.watchdog_monitor import FileMonitor
 from monitoring.event_deduplicator import EventDeduplicator
+from monitoring.defense_guard import collect_threat_flags
 from entropy.entropy_calculator  import EntropyAnalyzer, visualize_entropy
 
 # ── Setup Logging ─────────────────────────────────────────
@@ -299,7 +300,9 @@ class EventPipeline:
             self.stats['total_skipped'] += 1
             return
 
-        enriched_event = self._merge_event(event, entropy_result)
+        enriched_event = self._with_threat_flags(
+            self._merge_event(event, entropy_result)
+        )
         self.analyzed_store.add(enriched_event)
         self.stats['total_analyzed'] += 1
 
@@ -346,8 +349,23 @@ class EventPipeline:
             'pipeline_stage'  : 'monitor_only',
         }
 
+        # Defense-tamper signals matter on this path too: a DELETED
+        # event under the backup store is the whole point.
+        enriched = self._with_threat_flags(enriched)
+
         self.analyzed_store.add(enriched)
         self.stats['total_analyzed'] += 1
+
+    def _with_threat_flags(self, event: dict) -> dict:
+        """Attach hard-confirmation signals (ransom note, defense
+        tamper) before the decision engine sees the event. The
+        benchmark harness calls the same collect_threat_flags
+        function, so both paths stay identical."""
+        try:
+            event.update(collect_threat_flags(event))
+        except Exception as flag_err:
+            log.error(f"Threat flag collection failed: {flag_err}")
+        return event
 
     def _merge_event(self, file_event, entropy_result):
         """
@@ -375,7 +393,7 @@ class EventPipeline:
         if file_event.get('ext_changed', False):
             threat_score = min(100.0, threat_score + 20.0)
 
-        return {
+        combined = {
             # ── File Event Data ────────────────────────────
             'event_id'         : file_event['event_id'],
             'timestamp'        : file_event['timestamp'],
@@ -419,6 +437,7 @@ class EventPipeline:
             'ai_action'        : None,
             'action_taken'     : None,
         }
+        return combined
 
     def _log_analyzed_event(self, event):
         """Log a nicely formatted analysis result."""

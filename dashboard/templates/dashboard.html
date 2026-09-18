@@ -215,7 +215,7 @@ body {
 .tl-level { font-size: 18px; font-weight: 700; letter-spacing: 2px; min-width: 130px; text-align: right; font-family: 'Doto', monospace; }
 
 /* METRICS */
-.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+.metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 20px; }
 .metric { background: var(--panel); border: 1px solid var(--border); padding: 18px 20px; }
 .metric-lbl { font-size: 11px; letter-spacing: 2px; color: var(--text-mute); text-transform: uppercase; margin-bottom: 10px; font-family: 'Roboto Mono', monospace; font-weight: 500; }
 .metric-val { font-size: 34px; font-weight: 600; letter-spacing: 1px; line-height: 1; color: var(--text); font-family: 'Roboto Mono', monospace; }
@@ -407,6 +407,11 @@ body {
       <div class="metric-lbl">THREATS · DET</div>
       <div class="metric-val danger" id="m-threats">0000</div>
       <div class="metric-sub">blocked / logged</div>
+    </div>
+    <div class="metric">
+      <div class="metric-lbl">RECOVERY · RST</div>
+      <div class="metric-val" id="m-recovery">0000</div>
+      <div class="metric-sub">restored from clean backup</div>
     </div>
   </div>
 
@@ -602,11 +607,13 @@ async function loadStats() {
     const threats = d.threats || 0;
     const bcTx = d.blockchain_tx || 0;
     const quar = d.quarantined || 0;
+    const recovery = d.recovery || 0;
 
     document.getElementById('m-events').textContent = pad(total);
     document.getElementById('m-chain').textContent = pad(bcTx);
     document.getElementById('m-vault').textContent = pad(quar);
     document.getElementById('m-threats').textContent = pad(threats);
+    document.getElementById('m-recovery').textContent = pad(recovery);
     document.getElementById('chain-val').textContent = bcTx + ' TX';
 
     const level = total === 0 ? 0 : Math.min(100, Math.round((threats / total) * 150));
