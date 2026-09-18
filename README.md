@@ -8,7 +8,9 @@ This is a **training lab**, not endpoint protection. The attacker only
 modifies generated files under `victim_server/user_files`.
 
 For the external story, see [`docs/pitch.md`](docs/pitch.md); for measured
-detection numbers, see [`docs/benchmark-report.md`](docs/benchmark-report.md).
+detection numbers, see [`docs/benchmark-report.md`](docs/benchmark-report.md);
+for measured recovery / RTO numbers, see
+[`docs/recovery-drill-report.md`](docs/recovery-drill-report.md).
 
 ## One command
 
@@ -109,11 +111,47 @@ have already contained that exact payload — and legitimate work adds
 zero records to the threat-only exchange. See
 [`docs/federated-exchange.md`](docs/federated-exchange.md).
 
+## Recovery drill (measured RTO)
+
+Detection is only half the defence — the drill measures the full loop:
+real startup baseline → real attack replay → real detection → real
+quarantine → real restore, then verifies the estate **byte-for-byte**
+against its pre-attack state.
+
+```bash
+python -m benchmark.recovery_drill    # regenerate docs/recovery-drill-report.md + JSON
+```
+
+Current results (regenerate to refresh), 3 seeds × every scenario, with
+and without the startup baseline:
+
+- **111/246 attacked files recovered (45.1%)**, 12 contained-but-not-
+  restored, 123 lost — and every loss is accounted for by name, never
+  hidden.
+- **The startup baseline is the recovery lifeline**: with it, every
+  rename-based attack (burst encoder, slow crawler, polymorphic, silent
+  unknown-ext) is detected at the first op and 100% of the estate is
+  restored, with the file renamed back to its original name. Without
+  it, the same attacks are *detected* (alert only) and unrecoverable —
+  detection without containment.
+- **Median RTO = 8 file operations** (full estate safe) with the
+  baseline; attacker-clock RTO from 0.8 s (fast encoder) to 16 s
+  (stealth crawler at 2 s/op).
+- Published blind spots, by construction: in-place encryption of
+  in-range media is never detected (so never recovered), and deleting a
+  file outside a protected store is invisible to entropy. High-entropy
+  unknown files are *contained* but never auto-restored — the system
+  refuses to restore content that looks encrypted.
+
+Full per-scenario table and the honest accounting rules:
+[`docs/recovery-drill-report.md`](docs/recovery-drill-report.md).
+
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v
 python -m benchmark                 # optional: regenerate the benchmark report
+python -m benchmark.recovery_drill  # optional: regenerate the recovery drill report
 python -m benchmark.exchange_simulation   # optional: multi-node exchange demo
 ```
 

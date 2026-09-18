@@ -56,8 +56,10 @@ text file 5 seconds ago triggers the response.
    all recorded as requested-action vs actual-outcome.
 4. **Recovery** — confirmed threats get the last known-good copy restored
    from a hash-verified, versioned backup store — only after the file is
-   contained. We do **not** decrypt ransomware output (nobody can); we
-   restore what we protected.
+   contained; a renamed (disguised) file is also renamed back, so
+   recovery is complete in content *and* name. We do **not** decrypt
+   ransomware output (nobody can); we restore what we protected — and
+   the measured cost of that loop (RTO) is published per scenario.
 5. **Ledger + audit** — each confirmed threat's SHA-256 fingerprint is
    logged to a Solidity `ThreatLogger` contract (owner-only writes) on a
    local/test Ethereum node, with a labelled SQLite-ledger fallback when
@@ -96,6 +98,29 @@ blind spot** in `docs/benchmark-report.md`, with the signals that will
 close it (magic-byte validation, partial-encryption front detection, size
 anomalies). We'd rather be the company that publishes its blind spots.
 
+Recovery is measured the same way. A deterministic **recovery drill**
+runs each attack through the full loop — real startup baseline → real
+attack → real detection → real quarantine → real restore — then verifies
+the estate **byte-for-byte** against its pre-attack state.
+`docs/recovery-drill-report.md` publishes the honest accounting:
+
+| Metric | Result |
+| --- | --- |
+| Attacked files recovered (pre-attack bytes back) | **111/246 (45.1%)** |
+| Contained but not restored (no clean version usable) | 12 |
+| Lost (blind-spot encryption / unprotected deletion) | 123 |
+| Median RTO with startup baseline | 8 file operations |
+
+The headline is as honest as the number: **the startup baseline is the
+recovery lifeline.** With it, every rename-based attack is detected at
+the first operation and 100% of the estate is restored — file renamed
+back to its original name included. Without it, the same attacks are
+detected (alert only) and unrecoverable. Every one of the 135 files not
+recovered is accounted for by name in the report, including the two
+deliberate refusals: in-range media that can't be detected, and
+high-entropy unknown files the system will not restore because they
+*look* encrypted.
+
 ## Why the ledger
 
 Two jobs, both real:
@@ -132,6 +157,4 @@ chain for its own sake is not our claim.
    SHAP explanations) for calibrated, explainable 0–100 risk scores.
 2. Magic-byte validation + partial-encryption ("front") detection to
    close the media blind spot.
-3. The shared threat-fingerprint exchange (multi-node ledger).
-4. Recovery-drill mode publishing a measured RTO (detect → recovered).
-5. Multi-host agents + SIEM export.
+3. Multi-host agents + SIEM export.

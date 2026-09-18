@@ -256,7 +256,33 @@ class BackupManager:
                     captured += 1
         return captured
 
-    # ── Restore ──────────────────────────────────────────────
+    def transfer(self, old_path: str, new_path: str) -> bool:
+        """Move the version history from *old_path* to *new_path*.
+
+        Ransomware encrypts in place and then RENAMES (disguise).
+        Without this, the clean versions captured before the rename
+        are orphaned under the old path and restore — which looks up
+        by current path — can never find them. The monitor already
+        transfers entropy history across renames; the backup store
+        must do the same or rename-based attacks are unrecoverable.
+
+        Returns True if versions were moved.
+        """
+        if not old_path or not new_path or old_path == new_path:
+            return False
+        with self.lock:
+            try:
+                manifest = self._load_manifest()
+                versions = manifest.pop(old_path, None)
+                if not versions:
+                    return False
+                manifest.setdefault(new_path, []).extend(versions)
+                self._save_manifest(manifest)
+                return True
+            except OSError:
+                return False
+
+    # ── Restore ─────────────────────────────────────────────
 
     def find_restore_candidate(self, file_path: str,
                                before_iso: str | None = None) -> dict | None:

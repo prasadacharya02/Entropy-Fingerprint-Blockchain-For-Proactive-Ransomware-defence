@@ -183,6 +183,46 @@ class BackupManagerTests(unittest.TestCase):
         self.assertEqual(stats["files_protected"], 2)
         self.assertEqual(stats["files_restorable"], 2)
 
+    def test_transfer_moves_version_history(self):
+        self._write(_clean_bytes(seed=7))
+        self.backup.capture(
+            str(self.target),
+            event={"entropy_overall": 4.1, "event_type": "MODIFIED"},
+        )
+        new_path = self.tmp / "victim" / "document.locked"
+        moved = self.backup.transfer(str(self.target), str(new_path))
+        self.assertTrue(moved)
+        # Old path no longer has restorable versions; new path does.
+        self.assertIsNone(self.backup.find_restore_candidate(str(self.target)))
+        candidate = self.backup.find_restore_candidate(str(new_path))
+        self.assertIsNotNone(candidate)
+
+    def test_rename_recovery_finds_clean_version(self):
+        """Production rename sequence: encrypt+rename, transfer the
+        pre-rename history, capture the encrypted state, then restore
+        must bring the pre-attack bytes back at the NEW path."""
+        clean = _clean_bytes(seed=3)
+        self._write(clean)
+        self.backup.capture(
+            str(self.target),
+            event={"entropy_overall": 4.1, "event_type": "MODIFIED"},
+        )
+        # The attacker encrypts in place and disguises with a rename.
+        new_path = self.tmp / "victim" / "document.locked"
+        self.target.write_bytes(_dirty_bytes())
+        os.replace(str(self.target), str(new_path))
+        # Pipeline order: transfer history, then capture the new state.
+        self.assertTrue(self.backup.transfer(str(self.target), str(new_path)))
+        self.backup.capture(
+            str(new_path),
+            event={"entropy_overall": 8.0, "event_type": "RENAMED"},
+        )
+        with mock.patch.object(config, "DRY_RUN", False):
+            result = self.backup.restore(str(new_path))
+        self.assertTrue(result["success"], result.get("message"))
+        self.assertTrue(result["restored"])
+        self.assertEqual(new_path.read_bytes(), clean)
+
 
 class ForensicReportTests(unittest.TestCase):
     def setUp(self):

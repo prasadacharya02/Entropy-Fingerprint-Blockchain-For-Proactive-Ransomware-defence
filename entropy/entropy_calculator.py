@@ -360,6 +360,27 @@ class EntropyAnalyzer:
         if history:
             self.entropy_history[dest_path] = list(history)
 
+    def snapshot_directory(self, root: str) -> int:
+        """Prime entropy history for every file under *root*.
+
+        The startup baseline. Without this, the FIRST event on a
+        pre-existing file has no delta (empty history), so a rename
+        that encrypts an old file scores only its raw-entropy points
+        (alert, not quarantine). Priming makes the first-event delta
+        real — this is exactly what the benchmark's "baseline mode"
+        models, so production and the benchmark agree.
+
+        Read-only: mirrors BackupManager.snapshot_directory.
+        """
+        count = 0
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                if os.path.isfile(path):
+                    self.analyze(path)
+                    count += 1
+        return count
+
     def get_history(self, file_path: str) -> list:
         """Get entropy history for a specific file."""
         return list(self.entropy_history.get(file_path, []))

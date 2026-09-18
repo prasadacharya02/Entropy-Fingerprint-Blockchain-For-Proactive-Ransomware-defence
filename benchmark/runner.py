@@ -423,6 +423,21 @@ def write_markdown(summary: dict, out_path: Path) -> Path:
             "`python -m benchmark.exchange_simulation`; see "
             "`docs/federated-exchange.md`.")
         add("")
+    add("## Recovery drill (detect → contain → recover)")
+    add("")
+    add("Detection above is only half the defence. A separate drill "
+        "measures the full recovery loop end to end on a throwaway "
+        "estate: real startup baseline → real attack replay → real "
+        "detection → real quarantine → real restore, then verifies the "
+        "estate **byte-for-byte** against its pre-attack state and "
+        "reports RTO (in file operations and attacker-clock seconds) "
+        "alongside an honest recovery rate (recovered vs "
+        "contained-but-not-restored vs lost).")
+    add("")
+    add("Run `python -m benchmark.recovery_drill`; the published "
+        "numbers and the honest limitations live in "
+        "`docs/recovery-drill-report.md`.")
+    add("")
     add("## Method")
     add("")
     add("- Deterministic: all content and timing are seeded "

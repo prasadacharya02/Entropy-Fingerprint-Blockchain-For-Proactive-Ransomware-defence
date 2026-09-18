@@ -223,18 +223,21 @@ class EventPipeline:
             self._enqueue_event(event)
 
         # ── RENAMED = analyze the NEW filename (dest_path) ──
-        # This catches ransomware renaming .txt → .locked
+        # This catches ransomware renaming .txt → .locked.
+        # Note: the monitor already sets file_path=dest on RENAMED
+        # events, so the pre-rename path is in 'original_path' —
+        # transfer_history from the real source or the pre-rename
+        # entropy history (and therefore the delta signal) is lost.
         elif evt_type == 'RENAMED':
             dest = event.get('dest_path')
+            src = event.get('original_path') or event.get('file_path')
             if dest and os.path.exists(dest):
                 # Create a copy of the event with dest_path as the file_path
                 # This makes the entropy analyzer read the .locked file
-                self.entropy_analyzer.transfer_history(
-                    event.get('file_path'), dest
-                )
+                self.entropy_analyzer.transfer_history(src, dest)
                 renamed_event = dict(event)
                 renamed_event['file_path'] = dest
-                renamed_event['original_path'] = event['file_path']
+                renamed_event['original_path'] = src
                 self._enqueue_event(renamed_event)
             else:
                 self._store_without_entropy(event)
@@ -399,6 +402,9 @@ class EventPipeline:
             'timestamp'        : file_event['timestamp'],
             'event_type'       : file_event['event_type'],
             'file_path'        : file_event['file_path'],
+            # RENAMED events carry the pre-rename path (needed for
+            # backup-history transfer so restore works after disguise).
+            'original_path'    : file_event.get('original_path'),
             'file_extension'   : file_event['file_extension'],
             'file_size'        : entropy_result['file_size'],
             'events_per_sec'   : file_event['events_per_sec'],

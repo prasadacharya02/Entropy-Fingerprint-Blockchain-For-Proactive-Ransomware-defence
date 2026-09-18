@@ -42,6 +42,7 @@ import json
 import os
 import random
 import shutil
+import sqlite3
 import sys
 import tempfile
 from datetime import datetime
@@ -86,6 +87,24 @@ class _BcStub:
         pass
 
 
+def _make_events_db() -> sqlite3.Connection:
+    """A throwaway events DB so execute_response's record-every-decision
+    path runs exactly as in production (no 'NoneType' save errors)."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT,
+            file_path TEXT, event_type TEXT, entropy REAL,
+            entropy_delta REAL, pid INTEGER, process_name TEXT,
+            action INTEGER, status TEXT, requested_action INTEGER,
+            outcome TEXT, restore_result TEXT, dry_run INTEGER,
+            engine TEXT, confidence REAL, explanation TEXT, q_values TEXT
+        )
+    """)
+    conn.commit()
+    return conn
+
+
 def _engine() -> DecisionEngine:
     return DecisionEngine()
 
@@ -95,12 +114,14 @@ class Tenant:
     view of the shared exchange."""
 
     def __init__(self, node_id: str, exchange: FingerprintExchange,
-                 victim_root: Path, engine: DecisionEngine):
+                 victim_root: Path, engine: DecisionEngine,
+                 events_db=None):
         self.node_id = node_id
         self.exchange = exchange
         self.root = victim_root
         self.analyzer = EntropyAnalyzer()   # local history = local state
         self.engine = engine
+        self.events_db = events_db
         self.ops = []
 
     def lay(self, files: list[tuple[str, bytes]]) -> None:
@@ -143,8 +164,8 @@ class Tenant:
         decision = self.engine.decide(event)
         action = decision["action"]
         outcome = execute_response(
-            action, event, _BcStub(), None, decision, backup=None,
-            exchange=self.exchange,
+            action, event, _BcStub(), self.events_db, decision,
+            backup=None, exchange=self.exchange,
         )
         rec = {
             "node": self.node_id,
@@ -177,16 +198,16 @@ def run_simulation(base_dir: str | None = None) -> dict:
     # One shared exchange — the "network" all tenants see.
     shared_db = base / "exchange.db"
     engine = _engine()
-    tenants = {
-        name: Tenant(
+    tenants = {}
+    for name in ("tenant-alpha", "tenant-bravo", "tenant-charlie",
+                 "tenant-delta"):
+        tenants[name] = Tenant(
             name,
             FingerprintExchange(str(shared_db), node_id=name),
             base / f"victim_{name}",
             engine,
+            events_db=_make_events_db(),
         )
-        for name in ("tenant-alpha", "tenant-bravo", "tenant-charlie",
-                     "tenant-delta")
-    }
     alpha, bravo, charlie, delta = (
         tenants["tenant-alpha"], tenants["tenant-bravo"],
         tenants["tenant-charlie"], tenants["tenant-delta"],

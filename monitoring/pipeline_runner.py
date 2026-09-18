@@ -282,6 +282,28 @@ def execute_response(action: int,
                 except Exception as e:
                     restore_result = "RESTORE_FAILED"
                     log.error(f"  [RESTORE] {e}")
+
+        # ── RENAME BACK: complete the recovery ──
+        # A rename attack (doc.txt → doc.txt.locked) leaves the restored
+        # content under the disguised name. Move the file — and its
+        # backup version history — back to the original path so
+        # recovery is complete: content AND name.
+        if (restore_result == "RESTORED" and isinstance(event, dict)):
+            original = event.get("original_path")
+            if (original
+                    and os.path.abspath(original) != os.path.abspath(file_path)
+                    and os.path.exists(file_path)
+                    and not os.path.exists(original)):
+                try:
+                    os.replace(file_path, original)
+                    if backup is not None:
+                        backup.transfer(file_path, original)
+                    log.info(
+                        f"  [RESTORE] Rename-back complete: "
+                        f"{os.path.basename(original)}"
+                    )
+                except OSError as e:
+                    log.warning(f"  [RESTORE] Rename-back failed: {e}")
         if restore_result:
             outcome = f"{outcome}+{restore_result}"
 
@@ -588,6 +610,22 @@ class PipelineRunner:
         except Exception as e:
             log.warning(f"[RUNNER] Backup baseline failed: {e}")
 
+        # ── Prime entropy history with the same pre-watch state, so
+        # the FIRST event on a pre-existing file has a real delta
+        # (otherwise a rename encrypting an old file scores only its
+        # raw-entropy points — alert, not quarantine). This is what
+        # the benchmark's "baseline mode" models. ──
+        try:
+            primed = 0
+            for folder in config.WATCH_FOLDERS:
+                primed += self.pipeline.entropy_analyzer.snapshot_directory(
+                    folder
+                )
+            log.info(f"[RUNNER] Entropy history baseline: "
+                     f"{primed} file(s) primed")
+        except Exception as e:
+            log.warning(f"[RUNNER] Entropy baseline failed: {e}")
+
         # Register our callback with the pipeline
         self.pipeline.register_ai_callback(self._on_analyzed_event)
 
@@ -610,7 +648,25 @@ class PipelineRunner:
         # threshold) become restore candidates; dirty ones are kept
         # for forensics but are never restorable.
         file_path = event.get("file_path", "")
+        original_path = event.get("original_path")
         if file_path:
+            # ── Ransomware disguise: encrypted file gets renamed ──
+            # Keep the pre-rename version history (clean captures)
+            # usable for restore BEFORE capturing the new (encrypted)
+            # state, so versions stay in time order: without this,
+            # rename-based attacks are quarantined but never recovered.
+            if (event.get("event_type") == "RENAMED"
+                    and original_path
+                    and original_path != file_path):
+                try:
+                    if self.backup.transfer(original_path, file_path):
+                        log.info(
+                            f"[BACKUP] Version history transferred "
+                            f"{os.path.basename(original_path)} → "
+                            f"{os.path.basename(file_path)}")
+                except Exception as e:
+                    log.warning(
+                        f"[BACKUP] Transfer failed for {file_path}: {e}")
             try:
                 self.backup.capture(file_path, event=event)
             except Exception as e:
@@ -624,6 +680,19 @@ class PipelineRunner:
         status = execute_response(
             action, event, self.bc, self.db, decision, backup=self.backup
         )
+
+        # ── Mirror the rename-back in the entropy history ──
+        # execute_response may have moved a renamed file back to its
+        # original path; keep the analyzer's per-path history with it.
+        if (isinstance(status, str) and status.endswith("+RESTORED")
+                and original_path
+                and os.path.abspath(original_path) != os.path.abspath(file_path)):
+            try:
+                self.pipeline.entropy_analyzer.transfer_history(
+                    file_path, original_path
+                )
+            except Exception:
+                pass
 
         # ── Update stats ───────────────────────────
         if action == config.ACTION_IGNORE:

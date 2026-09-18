@@ -60,7 +60,23 @@ This project is a **controlled teaching lab**, not endpoint protection.
 - In dry-run mode restore is **simulated** (the backup is verified, the
   file is left in place). With `ENTROPY_DRY_RUN=false` the clean version
   is restored in place after the file is contained (quarantined or gone).
+- A file that was *renamed* by the attack is restored and then renamed
+  **back** to its original name, so recovery is complete in content and
+  name. The rename-back only happens when the original path is free, so
+  it can never clobber a file the attacker placed there.
 - The backup store keeps a bounded number of versions per file
   (`ENTROPY_BACKUP_MAX_VERSIONS`, default 10). Files that only ever
   existed in an encrypted state are not restorable — no backup of a
   clean version exists.
+- A "clean" version is one whose entropy was within the file type's
+  normal range at capture time. A random or already-encrypted unknown
+  file (entropy above the 6.8 threshold) is never labelled clean, so it
+  is **contained but never auto-restored** — the system deliberately
+  refuses to restore content that looks encrypted.
+- Deleting a file that lives *outside* any protected store raises no
+  signal and is invisible to entropy (there is no file to sample) — such
+  a deletion is a published loss, not a hidden one.
+- The recovery drill (`python -m benchmark.recovery_drill`) is the
+  authoritative source for the measured recovery rate and RTO, and it
+  counts *lost* files explicitly. See
+  `docs/recovery-drill-report.md`.
