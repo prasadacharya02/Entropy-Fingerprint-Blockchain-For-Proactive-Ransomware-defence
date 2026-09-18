@@ -38,10 +38,28 @@ import uuid
 
 import config
 
-__all__ = ["FingerprintExchange", "default_node_id"]
+__all__ = ["FingerprintExchange", "default_node_id", "get_exchange"]
 
 _MAX_SOURCES = 100
 _EVIDENCE_MAX = 200
+
+_EXCHANGE = None
+_EXCHANGE_LOCK = threading.Lock()
+
+
+def get_exchange() -> "FingerprintExchange":
+    """The node's shared view of the exchange (lazy singleton).
+
+    Both the live pipeline (response sharing, flag collection) and the
+    benchmark harness route through here; tests and the multi-node
+    simulation inject their own instances instead.
+    """
+    global _EXCHANGE
+    if _EXCHANGE is None:
+        with _EXCHANGE_LOCK:
+            if _EXCHANGE is None:
+                _EXCHANGE = FingerprintExchange()
+    return _EXCHANGE
 
 
 def default_node_id() -> str:

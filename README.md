@@ -87,11 +87,34 @@ Current rule-engine results (regenerate to refresh):
 - The startup baseline upgrades first-file alerts to confirmed
   quarantines by adding the entropy-delta signal.
 
+## Federated threat-fingerprint exchange
+
+The cross-node memory the pitch claims the blockchain exists to serve,
+now built and measured. Every **confirmed** threat's SHA-256 is written
+to a shared registry; on every event, the fingerprint is queried first.
+A fingerprint contained by ≥ `ENTROPY_EXCHANGE_CONFIRM_THRESHOLD`
+(default **2**) *independent* nodes is a **known threat** and
+auto-confirms; a single node's sighting only corroborates (+25 score)
+and can never quarantine alone — a poisoned node cannot seed the
+exchange into destroying clean files.
+
+```bash
+python -m benchmark.exchange_simulation   # multi-node demo + JSON artifact
+```
+
+The simulation drives the real decision + response chain and shows the
+headline: a fresh node with **zero local history** quarantines a
+file that is locally ambiguous (alert-only) because two other nodes
+have already contained that exact payload — and legitimate work adds
+zero records to the threat-only exchange. See
+[`docs/federated-exchange.md`](docs/federated-exchange.md).
+
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v
-python -m benchmark        # optional: regenerate the benchmark report
+python -m benchmark                 # optional: regenerate the benchmark report
+python -m benchmark.exchange_simulation   # optional: multi-node exchange demo
 ```
 
 ## Limits

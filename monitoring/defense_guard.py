@@ -25,6 +25,7 @@ from threading import Lock
 import psutil
 
 import config
+from blockchain.fingerprint_exchange import get_exchange
 from response.ransom_note import detect_ransom_note
 
 # (signature, description) — matched as lowercase substrings of the
@@ -103,18 +104,27 @@ def scan_process_cmdlines(max_age_seconds: float = 2.0) -> list:
 
 
 def collect_threat_flags(event: dict,
-                         protected_roots: tuple | None = None) -> dict:
+                         protected_roots: tuple | None = None,
+                         exchange=None) -> dict:
     """Compute the hard-confirmation flags for one file event.
 
     Returns a dict with: ransom_note, ransom_note_evidence,
-    defense_tamper, defense_tamper_evidence. The caller merges it
-    into the event before the decision engine sees it.
+    defense_tamper, defense_tamper_evidence, known_threat,
+    known_threat_evidence, known_threat_confirmed. The caller merges
+    it into the event before the decision engine sees it.
+
+    ``exchange`` defaults to the node's shared store; the benchmark
+    and the multi-node simulation inject isolated instances so they
+    never read or write the real registry.
     """
     flags = {
         "ransom_note": False,
         "ransom_note_evidence": [],
         "defense_tamper": False,
         "defense_tamper_evidence": [],
+        "known_threat": False,
+        "known_threat_evidence": "",
+        "known_threat_confirmed": False,
     }
     file_path = event.get("file_path") or ""
     event_type = (event.get("event_type") or "").upper()
@@ -157,5 +167,32 @@ def collect_threat_flags(event: dict,
                 f"process {h['pid']} ({h['name']}): {h['signature']}"
                 for h in hits[:3]
             )
+
+    # 4. Federated exchange: has any node already contained this exact
+    # fingerprint as a confirmed threat? A single node's sighting is
+    # corroboration only; >= EXCHANGE_CONFIRM_THRESHOLD *independent*
+    # sources confirm the fingerprint as a known threat.
+    fingerprint = event.get("file_hash") or ""
+    if fingerprint:
+        # An injected exchange is an explicit opt-in; the canonical
+        # store is gated by config.EXCHANGE_ENABLED.
+        if exchange is None and not config.EXCHANGE_ENABLED:
+            store = None
+        else:
+            store = exchange if exchange is not None else get_exchange()
+        try:
+            rec = store.lookup(fingerprint) if store is not None else None
+        except Exception:
+            rec = None
+        if rec:
+            sources = rec.get("sources") or []
+            flags["known_threat"] = True
+            flags["known_threat_evidence"] = (
+                f"contained by {len(sources)} node(s) "
+                f"[{', '.join(sources)}], "
+                f"{rec.get('sightings', 0)} sighting(s) on record"
+            )
+            if len(sources) >= config.EXCHANGE_CONFIRM_THRESHOLD:
+                flags["known_threat_confirmed"] = True
 
     return flags

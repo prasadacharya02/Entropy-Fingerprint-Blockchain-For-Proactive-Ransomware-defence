@@ -34,6 +34,13 @@ This project is a **controlled teaching lab**, not endpoint protection.
 - Modes are explicit: `ganache`, `fallback` (local SQLite), or `none`.
 - Fallback is **not** an immutable chain.
 - `logThreat` is `onlyOwner`. Set `ENTROPY_WALLET_ADDRESS` to the deployer.
+- The **federated exchange** is simulated with one shared SQLite store
+  that several simulated nodes open — it is not a network. A fingerprint
+  match is corroborating evidence and can only *confirm* a threat already
+  at quarantine-threshold; it is never a standalone detector, and a single
+  node's sighting can only corroborate (never auto-quarantine) — the
+  independent-node consensus threshold is the defence against a poisoned
+  node. See `docs/federated-exchange.md`.
 
 ## Simulator
 

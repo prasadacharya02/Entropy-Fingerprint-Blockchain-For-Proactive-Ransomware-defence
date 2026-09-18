@@ -279,8 +279,15 @@ class PipelineRecoveryWiringTests(unittest.TestCase):
         self.target = self.tmp / "victim" / "document.txt"
         self.target.parent.mkdir(parents=True, exist_ok=True)
         self.ledger = _FakeLedger()
+        # These tests exercise recovery, not the federated exchange:
+        # keep confirmed-threat registration out of the real store.
+        self._exchange_disabled = mock.patch.object(
+            config, "EXCHANGE_ENABLED", False
+        )
+        self._exchange_disabled.start()
 
     def tearDown(self):
+        self._exchange_disabled.stop()
         self._tmp.cleanup()
 
     def _event(self, entropy: float, delta: float = 0.0,

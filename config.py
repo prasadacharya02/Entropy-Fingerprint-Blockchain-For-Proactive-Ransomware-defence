@@ -141,6 +141,8 @@ BLOCKCHAIN_FALLBACK = _env_bool("ENTROPY_BLOCKCHAIN_FALLBACK", False)
 THREAT_EXCHANGE_DB         = str(BASE_PATH / "blockchain" / "exchange.db")
 EXCHANGE_NODE_ID           = os.getenv("ENTROPY_NODE_ID", "").strip()
 EXCHANGE_CONFIRM_THRESHOLD = _env_int("ENTROPY_EXCHANGE_CONFIRM_THRESHOLD", 2, minimum=2)
+# Master switch (tests and single-node offline use disable it).
+EXCHANGE_ENABLED           = _env_bool("ENTROPY_EXCHANGE", True)
 
 # ── Web Servers & Hosts ──────────────────────────────────────
 DASHBOARD_HOST      = os.getenv("ENTROPY_DASHBOARD_HOST", "127.0.0.1")

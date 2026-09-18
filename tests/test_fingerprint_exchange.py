@@ -123,7 +123,8 @@ class ExchangeResponseIntegrationTests(unittest.TestCase):
             def log_event(self, _e):
                 pass
         with mock.patch.object(config, "DRY_RUN", True), \
-             mock.patch.object(runner, "_EXCHANGE", self.exchange):
+             mock.patch.object(runner, "get_exchange",
+                               lambda: self.exchange):
             return runner.execute_response(
                 action, event, _Bc(), None,
                 {"engine": "rules", "confidence": 1.0,

@@ -17,7 +17,6 @@ import json
 import hashlib
 import logging
 from datetime import datetime
-import threading
 from threading import Thread
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -84,25 +83,10 @@ def init_db():
 # FEDERATED THREAT-FINGERPRINT EXCHANGE
 # ============================================================
 
-_EXCHANGE = None
-_EXCHANGE_LOCK = threading.Lock()
-
-
-def get_exchange():
-    """This node's view of the shared threat-fingerprint exchange.
-
-    Lazy, so the store is created only when a confirmed threat is
-    actually shared (and so tests can inject a temp store).
-    """
-    global _EXCHANGE
-    if _EXCHANGE is None:
-        with _EXCHANGE_LOCK:
-            if _EXCHANGE is None:
-                from blockchain.fingerprint_exchange import FingerprintExchange
-                _EXCHANGE = FingerprintExchange()
-                log.info("[EXCHANGE] Fingerprint exchange ready "
-                         f"(node={_EXCHANGE.node_id})")
-    return _EXCHANGE
+# The node's shared view of the exchange. The canonical lazy singleton
+# lives in blockchain.fingerprint_exchange so the flag collection in
+# defense_guard and the response sharing here use the same store.
+from blockchain.fingerprint_exchange import get_exchange  # noqa: F401
 
 
 def save_to_db(conn, event, action, status, outcome=None, decision=None,
@@ -154,10 +138,13 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None,
 def make_decision(event: dict) -> int:
 
     # ── Hard-confirmation signals ────────────────────────────
-    # A dropped ransom note, or an attacker destroying the recovery
-    # capability (backup store / Shadow Copies / services), is a
-    # confirmed incident on its own — no entropy signal required.
-    if event.get("ransom_note") or event.get("defense_tamper"):
+    # A dropped ransom note, an attacker destroying the recovery
+    # capability (backup store / Shadow Copies / services), or a
+    # fingerprint that >= EXCHANGE_CONFIRM_THRESHOLD *independent*
+    # nodes have already contained as a confirmed threat, is a
+    # confirmed incident on its own — no local signal required.
+    if (event.get("ransom_note") or event.get("defense_tamper")
+            or event.get("known_threat_confirmed")):
         return config.ACTION_TERMINATE_QUARANTINE
 
     entropy   = event.get("entropy_overall") or 0.0
@@ -166,6 +153,13 @@ def make_decision(event: dict) -> int:
     score     = event.get("threat_score")     or 0.0
     ext_chg   = event.get("ext_changed",      False)
     hi_speed  = event.get("is_suspicious_speed", False)
+
+    # A fingerprint seen by a SINGLE node is corroboration, not
+    # confirmation: it weighs the score but can never quarantine
+    # alone (a poisoned or buggy node must not be able to seed the
+    # exchange into destroying clean files everywhere).
+    if event.get("known_threat"):
+        score = min(100.0, score + 25.0)
 
     # High entropy is not sufficient evidence: images, archives, videos and
     # encrypted user files are expected to be high entropy. Require a second
@@ -205,7 +199,8 @@ def execute_response(action: int,
                      event: dict,
                      bc: BlockchainConnector,
                      db_conn, decision: dict | None = None,
-                     backup: "BackupManager | None" = None) -> str:
+                     backup: "BackupManager | None" = None,
+                     exchange=None) -> str:
 
     file_path = event.get("file_path", "")
     proc      = event.get("process") or {}
@@ -340,21 +335,29 @@ def execute_response(action: int,
     # already-deleted target of a defense-tamper event) must never be
     # published as a threat fingerprint.
     if action == config.ACTION_TERMINATE_QUARANTINE and file_hash:
-        try:
-            rec = get_exchange().register(
-                file_hash,
-                threat_type="ransomware",
-                file_extension=os.path.splitext(file_path)[1].lower(),
-                file_size=event.get("file_size") or 0,
-                evidence=(decision or {}).get("explanation", ""),
-            )
-            log.warning(
-                f"  [EXCHANGE] fingerprint {file_hash[:12]}… shared "
-                f"(sightings={rec['sightings']}, "
-                f"sources={len(rec['sources'])})"
-            )
-        except Exception as e:
-            log.error(f"  [EXCHANGE] Registration failed: {e}")
+        # An injected exchange (benchmark / multi-node simulation) is an
+        # explicit opt-in and always registers. The canonical store is
+        # gated by config.EXCHANGE_ENABLED (tests / single-node offline).
+        if exchange is None and not config.EXCHANGE_ENABLED:
+            store = None
+        else:
+            store = exchange if exchange is not None else get_exchange()
+        if store is not None:
+            try:
+                rec = store.register(
+                    file_hash,
+                    threat_type="ransomware",
+                    file_extension=os.path.splitext(file_path)[1].lower(),
+                    file_size=event.get("file_size") or 0,
+                    evidence=(decision or {}).get("explanation", ""),
+                )
+                log.warning(
+                    f"  [EXCHANGE] fingerprint {file_hash[:12]}… shared "
+                    f"(sightings={rec['sightings']}, "
+                    f"sources={len(rec['sources'])})"
+                )
+            except Exception as e:
+                log.error(f"  [EXCHANGE] Registration failed: {e}")
 
     # Return the detailed outcome (e.g. "DRY_RUN_QUARANTINE+DRY_RUN_RESTORE"),
     # not just the action label — callers and the dashboard rely on it.
@@ -494,9 +497,16 @@ class DecisionEngine:
             explanation += " | RANSOM NOTE: " + "; ".join(
                 event.get("ransom_note_evidence") or []
             )
-        elif event.get("defense_tamper"):
+        if event.get("defense_tamper"):
             explanation += " | DEFENSE TAMPER: " + "; ".join(
                 event.get("defense_tamper_evidence") or []
+            )
+        if event.get("known_threat"):
+            marker = "KNOWN THREAT (CONFIRMED BY EXCHANGE): " \
+                if event.get("known_threat_confirmed") else \
+                "KNOWN THREAT (CORROBORATED BY EXCHANGE): "
+            explanation += " | " + marker + (
+                event.get("known_threat_evidence") or ""
             )
         elif event.get("reason"):
             explanation += f" | {event['reason']}"

@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import config
+from blockchain.fingerprint_exchange import FingerprintExchange
 from entropy.entropy_calculator import EntropyAnalyzer
 from monitoring.defense_guard import collect_threat_flags
 from monitoring.pipeline_runner import make_decision
@@ -58,7 +59,8 @@ class _Clock:
         return len(recent) / self.window
 
 
-def simulate_scenario(scenario, *, baseline: bool, root: Path) -> dict:
+def simulate_scenario(scenario, *, baseline: bool, root: Path,
+                      exchange=None) -> dict:
     """Run one scenario through the real detection chain."""
     # Reset the victim root and lay down the initial estate.
     if root.exists():
@@ -141,9 +143,13 @@ def simulate_scenario(scenario, *, baseline: bool, root: Path) -> dict:
             "ext_changed": ext_changed,
         }
         # Identical hard-confirmation signal collection as the live
-        # pipeline (EventPipeline._merge_event).
+        # pipeline (EventPipeline._merge_event). The benchmark passes an
+        # isolated exchange so it neither reads nor pollutes the real
+        # federated registry.
         try:
-            event.update(collect_threat_flags(event, protected_roots or None))
+            event.update(collect_threat_flags(
+                event, protected_roots or None, exchange=exchange,
+            ))
         except Exception:
             pass
         action = make_decision(event)
@@ -187,6 +193,11 @@ def run_battery(seeds=(1, 2, 3),
     workloads without a baseline (the harder false-positive case)."""
     runs = []
     tmp_base = Path(tempfile.mkdtemp(prefix="entropy_bench_"))
+    # Isolated, per-battery exchange: the benchmark must be a closed,
+    # reproducible system. No battery reads or writes the real registry.
+    exchange = FingerprintExchange(
+        str(tmp_base / "exchange.db"), node_id="benchmark-battery"
+    )
     try:
         for seed in seeds:
             for index, builder in enumerate(attacks or ATTACKS):
@@ -195,14 +206,17 @@ def run_battery(seeds=(1, 2, 3),
                     root = tmp_base / f"a{index}_s{seed}_b{int(baseline)}"
                     runs.append(simulate_scenario(
                         scenario, baseline=baseline, root=root,
+                        exchange=exchange,
                     ))
             for index, builder in enumerate(workloads or WORKLOADS):
                 scenario = builder(seed)
                 root = tmp_base / f"w{index}_s{seed}"
                 runs.append(simulate_scenario(
                     scenario, baseline=False, root=root,
+                    exchange=exchange,
                 ))
     finally:
+        exchange.close()
         shutil.rmtree(tmp_base, ignore_errors=True)
     return runs
 

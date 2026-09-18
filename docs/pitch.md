@@ -98,12 +98,24 @@ anomalies). We'd rather be the company that publishes its blind spots.
 
 ## Why the ledger
 
-Today: tamper-evident, owner-only audit trail of confirmed threats —
-the artifact insurers and auditors ask for. Designed forward: the same
-fingerprint log becomes a **shared threat-fingerprint network** — one
-tenant's confirmed detection answers every tenant's "have we seen this
-before?". That is the network effect the blockchain exists to serve;
-logging to a chain for its own sake is not our claim.
+Two jobs, both real:
+
+1. **Tamper-evident audit** — an owner-only log of confirmed threats,
+   the artifact insurers and auditors ask for.
+2. **The shared threat-fingerprint exchange** — built and measured, not
+   just designed: every confirmed threat's SHA-256 is shared, and every
+   node asks the exchange "have we seen this before?" before deciding.
+   A fingerprint contained by ≥2 *independent* nodes auto-confirms on a
+   fresh node with zero local history (the multi-node simulation shows a
+   locally-ambiguous file escalated from alert to quarantine purely on
+   cross-node memory); a single node's sighting only corroborates — a
+   poisoned node cannot seed the exchange into destroying clean files.
+   In the lab the "network" is one shared store several simulated nodes
+   open; the API is written so it swaps for a real network backend
+   untouched.
+
+That is the network effect the blockchain exists to serve; logging to a
+chain for its own sake is not our claim.
 
 ## What's deliberately not true
 
