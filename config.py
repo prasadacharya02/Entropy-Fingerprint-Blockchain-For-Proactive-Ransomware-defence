@@ -119,6 +119,15 @@ ENTROPY_DELTA_THRESHOLD    = _env_float("ENTROPY_DELTA_THRESHOLD", 2.0, minimum=
 FILES_PER_SECOND_THRESHOLD = _env_float("ENTROPY_FILES_PER_SECOND_THRESHOLD", 3.0, minimum=0.0)
 SAMPLE_SIZE_BYTES          = _env_int("ENTROPY_SAMPLE_SIZE_BYTES", 65536, minimum=1)
 
+# ── Decision Engine Selection ────────────────────────────────
+# "auto" / "rules" (default) = the deterministic rule engine — the
+# measured 0-false-quarantine safety bar, and the default even when
+# trained models exist. "rf" = the Random Forest second classifier
+# (calibrated, SHAP-explained risk; opt-in high-recall mode).
+# "dqn" = the trained DQN (opt-in). A requested engine that cannot
+# load falls back to rules, always labelled as such.
+AI_ENGINE = os.getenv("ENTROPY_AI_ENGINE", "auto").strip().lower()
+
 # ── Backup & Recovery ────────────────────────────────────────
 # Versions kept per file in the backup store (oldest evicted).
 BACKUP_MAX_VERSIONS_PER_FILE = _env_int("ENTROPY_BACKUP_MAX_VERSIONS", 10, minimum=1)

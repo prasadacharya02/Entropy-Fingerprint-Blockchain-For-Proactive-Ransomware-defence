@@ -47,3 +47,6 @@ ai/*.pt
 build/
 dist/
 *.egg-info/
+
+# Agent session scratch (memory, not repo content)
+.arena/

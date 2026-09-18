@@ -106,7 +106,12 @@ def _make_events_db() -> sqlite3.Connection:
 
 
 def _engine() -> DecisionEngine:
-    return DecisionEngine()
+    # The simulation measures the EXCHANGE layer (corroboration vs
+    # confirmation, poison-node defence) with the baseline detector.
+    # Pin it to the deterministic rule engine so the documented
+    # invariants (cold start = alert-only, single sighting never
+    # quarantines) hold regardless of which trained models exist.
+    return DecisionEngine(engine="rules")
 
 
 class Tenant:

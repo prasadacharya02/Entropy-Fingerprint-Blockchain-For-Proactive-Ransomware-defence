@@ -89,6 +89,25 @@ Current rule-engine results (regenerate to refresh):
 - The startup baseline upgrades first-file alerts to confirmed
   quarantines by adding the entropy-delta signal.
 
+## Second classifier (Random Forest + SHAP)
+
+A calibrated, explainable 0–100 risk score over the same feature
+vector the DQN uses (plus *in-range-for-extension*), with per-incident
+SHAP explanations of what drove each decision.
+
+```bash
+python -m ai.train_rf        # train + persist ai/rf_weights.json (deterministic)
+```
+
+Measured on the identical benchmark battery (see
+[`docs/benchmark-report.md`](docs/benchmark-report.md)): the Random
+Forest detects **48/48 (100%)** — closing the image blind spot — but
+false-quarantines 6 legitimate media runs (photo/video import), so it
+does **not** meet the 0-false-quarantine safety bar and is **not the
+default**. The rule engine stays the default; opt into the RF with
+`ENTROPY_AI_ENGINE=rf` (every decision is labelled with its engine:
+`rules` / `rf` / `dqn`).
+
 ## Federated threat-fingerprint exchange
 
 The cross-node memory the pitch claims the blockchain exists to serve,

@@ -60,7 +60,15 @@ text file 5 seconds ago triggers the response.
    recovery is complete in content *and* name. We do **not** decrypt
    ransomware output (nobody can); we restore what we protected — and
    the measured cost of that loop (RTO) is published per scenario.
-5. **Ledger + audit** — each confirmed threat's SHA-256 fingerprint is
+5. **Explainable AI, honestly scoped** — a Random Forest second
+   classifier produces a calibrated 0–100 risk score and names the
+   top features that drove *this* decision (SHAP). Measured on the
+   same battery it detects 48/48 attacks — closing the image blind
+   spot — but false-quarantines high-entropy media workloads, so it
+   ships as an **opt-in high-recall mode** (`ENTROPY_AI_ENGINE=rf`),
+   not the default. The deterministic rule engine keeps the
+   0-false-quarantine bar that a production defender can vouch for.
+6. **Ledger + audit** — each confirmed threat's SHA-256 fingerprint is
    logged to a Solidity `ThreatLogger` contract (owner-only writes) on a
    local/test Ethereum node, with a labelled SQLite-ledger fallback when
    the chain is offline. Every incident also produces a durable forensic
@@ -153,8 +161,7 @@ chain for its own sake is not our claim.
 
 ## What's next (in order)
 
-1. A second-classifier layer (Random Forest over the same features with
-   SHAP explanations) for calibrated, explainable 0–100 risk scores.
-2. Magic-byte validation + partial-encryption ("front") detection to
-   close the media blind spot.
-3. Multi-host agents + SIEM export.
+1. Magic-byte validation + partial-encryption ("front") detection to
+   close the media blind spot in the *default* rule engine (the opt-in
+   Random Forest already detects it, at a measured false-positive cost).
+2. Multi-host agents + SIEM export.

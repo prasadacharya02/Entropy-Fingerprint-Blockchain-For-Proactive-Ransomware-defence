@@ -60,8 +60,12 @@ class _Clock:
 
 
 def simulate_scenario(scenario, *, baseline: bool, root: Path,
-                      exchange=None) -> dict:
-    """Run one scenario through the real detection chain."""
+                      exchange=None, engine=None) -> dict:
+    """Run one scenario through the real detection chain.
+
+    *engine* is an optional DecisionEngine: when given, decisions come
+    from that engine (the exact path the live pipeline uses) instead
+    of the bare rule function."""
     # Reset the victim root and lay down the initial estate.
     if root.exists():
         shutil.rmtree(root)
@@ -152,7 +156,10 @@ def simulate_scenario(scenario, *, baseline: bool, root: Path,
             ))
         except Exception:
             pass
-        action = make_decision(event)
+        if engine is not None:
+            action = int(engine.decide(event)["action"])
+        else:
+            action = make_decision(event)
 
         peak_score = max(peak_score, float(result.get("threat_score") or 0.0))
         if action >= config.ACTION_ALERT and first_detection_op is None:
@@ -175,6 +182,7 @@ def simulate_scenario(scenario, *, baseline: bool, root: Path,
         "scenario": scenario.name,
         "kind": scenario.kind,
         "description": scenario.description,
+        "engine": engine.engine_name() if engine is not None else "rules",
         "baseline": baseline,
         "ops": len(ops_record),
         "detected": detected,
@@ -188,9 +196,11 @@ def simulate_scenario(scenario, *, baseline: bool, root: Path,
 
 
 def run_battery(seeds=(1, 2, 3),
-                attacks=None, workloads=None) -> list:
+                attacks=None, workloads=None, engine=None) -> list:
     """Run the full battery. Attacks in both baseline modes;
-    workloads without a baseline (the harder false-positive case)."""
+    workloads without a baseline (the harder false-positive case).
+    *engine* optionally routes every decision through a DecisionEngine
+    (e.g. the Random Forest) instead of the bare rule function."""
     runs = []
     tmp_base = Path(tempfile.mkdtemp(prefix="entropy_bench_"))
     # Isolated, per-battery exchange: the benchmark must be a closed,
@@ -206,14 +216,14 @@ def run_battery(seeds=(1, 2, 3),
                     root = tmp_base / f"a{index}_s{seed}_b{int(baseline)}"
                     runs.append(simulate_scenario(
                         scenario, baseline=baseline, root=root,
-                        exchange=exchange,
+                        exchange=exchange, engine=engine,
                     ))
             for index, builder in enumerate(workloads or WORKLOADS):
                 scenario = builder(seed)
                 root = tmp_base / f"w{index}_s{seed}"
                 runs.append(simulate_scenario(
                     scenario, baseline=False, root=root,
-                    exchange=exchange,
+                    exchange=exchange, engine=engine,
                 ))
     finally:
         exchange.close()
@@ -270,7 +280,7 @@ def summarize(runs: list) -> dict:
     )
 
     return {
-        "engine": "rules",
+        "engine": runs[0].get("engine", "rules") if runs else "rules",
         "generated_at": datetime.now().isoformat(),
         "config": {
             "entropy_threshold": config.ENTROPY_THRESHOLD,
@@ -438,6 +448,89 @@ def write_markdown(summary: dict, out_path: Path) -> Path:
         "numbers and the honest limitations live in "
         "`docs/recovery-drill-report.md`.")
     add("")
+    rf = summary.get("rf_classifier")
+    if rf and "error" not in rf:
+        rfs = rf["summary"]
+        rs = summary["summary"]
+        add("## Second classifier (Random Forest + SHAP)")
+        add("")
+        add("The identical battery, driven through the Random Forest "
+            "engine (the calibrated, explainable 0–100 risk score). "
+            "The RF is trained on synthetic, seeded data; this table is "
+            "the measured comparison against the deterministic rule "
+            "engine on the same scenarios.")
+        add("")
+        add("| Metric | Rules | Random Forest |")
+        add("| --- | --- | --- |")
+        add(f"| Attack detection | "
+            f"**{rs['attacks_detected']}/{rs['attack_runs']}** "
+            f"({rs['detection_rate']}%) | "
+            f"**{rfs['attacks_detected']}/{rfs['attack_runs']}** "
+            f"({rfs['detection_rate']}%) |")
+        add(f"| Legit FP rate (workloads alerted) | "
+            f"{rs['legitimate_alerted']}/{rs['legitimate_runs']} "
+            f"({rs['false_positive_rate']}%) | "
+            f"{rfs['legitimate_alerted']}/{rfs['legitimate_runs']} "
+            f"({rfs['false_positive_rate']}%) |")
+        add(f"| **False quarantines** | "
+            f"**{rs['false_quarantines']}** | "
+            f"**{rfs['false_quarantines']}** |")
+        add("")
+        add("Per-scenario (detected/runs):")
+        add("")
+        add("| Scenario | Rules | RF |")
+        add("| --- | --- | --- |")
+        for name in summary["attacks"]:
+            add(f"| `{name}` | "
+                f"{summary['attacks'][name]['detected']}/"
+                f"{summary['attacks'][name]['runs']} | "
+                f"{rf['attacks'].get(name, {}).get('detected', '—')}/"
+                f"{rf['attacks'].get(name, {}).get('runs', '—')} |")
+        add("")
+        add("Per-workload (alerted/runs | false quarantines):")
+        add("")
+        add("| Workload | Rules | RF |")
+        add("| --- | --- | --- |")
+        for name in summary["workloads"]:
+            add(f"| `{name}` | "
+                f"{summary['workloads'][name]['alerted_runs']}/"
+                f"{summary['workloads'][name]['runs']} "
+                f"(fq {summary['workloads'][name]['false_quarantine_runs']})"
+                f" | "
+                f"{rf['workloads'].get(name, {}).get('alerted_runs', '—')}/"
+                f"{rf['workloads'].get(name, {}).get('runs', '—')} "
+                f"(fq {rf['workloads'].get(name, {}).get('false_quarantine_runs', 0)}) |")
+        add("")
+        fq_workloads = [
+            f"`{name}` ({rf['workloads'][name]['false_quarantine_runs']}"
+            f"/{rf['workloads'][name]['runs']})"
+            for name in rf["workloads"]
+            if rf["workloads"][name]["false_quarantine_runs"]
+        ]
+        verdict = (
+            f"The Random Forest is a **high-recall, opt-in** engine: it "
+            f"detects {rfs['detection_rate']}% of attacks (closing the "
+            f"image blind spot the rules publish as a limitation) but "
+            f"false-quarantines "
+            f"{rfs['false_quarantines']} legitimate run(s)"
+            f"{' — ' + ', '.join(fq_workloads) if fq_workloads else ''} — "
+            f"so it does **not** meet the 0-false-quarantine safety bar "
+            f"and is **not the default**. The rule engine stays the "
+            f"default; select the RF explicitly with "
+            f"`ENTROPY_AI_ENGINE=rf`."
+        )
+        add(verdict)
+        add("")
+        add("Per-incident explanations (SHAP) name the top features "
+            "that drove each decision — e.g. `entropy_delta +risk, "
+            "in_normal_range -risk`. Train: `python -m ai.train_rf`.")
+        add("")
+    elif rf and "error" in rf:
+        add("## Second classifier (Random Forest + SHAP)")
+        add("")
+        add(f"Random Forest second classifier not active: {rf['error']}. "
+            "The rule-engine numbers above are the published result.")
+        add("")
     add("## Method")
     add("")
     add("- Deterministic: all content and timing are seeded "
@@ -452,10 +545,40 @@ def write_markdown(summary: dict, out_path: Path) -> Path:
         "no snapshot (the worst case).")
     add("- Detection latency is counted in file operations (event-level), "
         "not wall-clock seconds.")
+    add("- The Random Forest comparison reuses the identical scenarios, "
+        "seeds, and event stream; only the decision engine differs "
+        "(`DecisionEngine(engine='rf')`). The RF is trained on seeded "
+        "synthetic data (`python -m ai.train_rf`), so its numbers are a "
+        "measured model-vs-rules comparison, not a claim that "
+        "synthetic training predicts real-world prevalence.")
     add("")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines), encoding="utf-8")
     return out_path
+
+
+def _rf_battery_summary(seeds) -> dict:
+    """Run the identical battery through the Random Forest engine and
+    return a compact, comparable summary. Returns {"error": ...} when
+    the RF is not trained / scikit-learn is missing — the rules battery
+    still publishes either way."""
+    from monitoring.pipeline_runner import DecisionEngine
+    try:
+        engine = DecisionEngine(engine="rf")
+        if engine.engine_name() != "rf":
+            return {"error": ("Random Forest not active "
+                              "(train with: python -m ai.train_rf)")}
+        rf_runs = run_battery(seeds=seeds, engine=engine)
+        s = summarize(rf_runs)
+        return {
+            "engine": "rf",
+            "summary": s["summary"],
+            "attacks": s["attacks"],
+            "workloads": s["workloads"],
+            "known_blind_spots": s["known_blind_spots"],
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def main(argv=None) -> int:
@@ -488,6 +611,10 @@ def main(argv=None) -> int:
     finally:
         shutil.rmtree(sim_dir, ignore_errors=True)
 
+    # Second classifier (Random Forest + SHAP): the identical battery
+    # through the RF engine, published side by side with the rules.
+    summary["rf_classifier"] = _rf_battery_summary(seeds)
+
     repo_root = Path(__file__).resolve().parents[1]
     json_path = write_json(summary, repo_root / "benchmark" / "results")
     md_path = write_markdown(summary, repo_root / "docs" / "benchmark-report.md")
@@ -517,6 +644,20 @@ def main(argv=None) -> int:
         for name, row in summary["workloads"].items():
             print(f"    {name:22} {row['alerted_runs']}/{row['runs']}"
                   f"  |  {row['false_quarantine_runs']}")
+        rf = summary.get("rf_classifier")
+        if rf and "error" not in rf:
+            rfs = rf["summary"]
+            print("-" * 64)
+            print("  Random Forest second classifier (same battery):")
+            print(f"    Attack detection   : {rfs['attacks_detected']}/"
+                  f"{rfs['attack_runs']} ({rfs['detection_rate']}%)")
+            print(f"    Legit FP rate      : "
+                  f"{rfs['legitimate_alerted']}/{rfs['legitimate_runs']} "
+                  f"({rfs['false_positive_rate']}%)")
+            print(f"    False quarantines  : {rfs['false_quarantines']}")
+        elif rf and "error" in rf:
+            print("-" * 64)
+            print(f"  Random Forest second classifier: {rf['error']}")
         if summary["known_blind_spots"]:
             print("-" * 64)
             print(f"  Known blind spots: {', '.join(summary['known_blind_spots'])}")

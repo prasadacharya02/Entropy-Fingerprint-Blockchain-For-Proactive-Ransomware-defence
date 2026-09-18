@@ -46,6 +46,19 @@ except Exception as _dqn_err:
     log.warning(f"[RUNNER] DQN unavailable ({_dqn_err}) — "
                 f"using rule-based fallback")
 
+# ── Optional Random Forest second classifier ────────────
+# A calibrated, explainable risk score (scikit-learn + SHAP).
+# Optional exactly like the DQN: no scikit-learn / no trained
+# weights → the rule engine decides.
+try:
+    from ai.rf_model import RFEngine
+    _RF_AVAILABLE = True
+except Exception as _rf_err:
+    RFEngine = None
+    _RF_AVAILABLE = False
+    log.warning(f"[RUNNER] Random Forest unavailable ({_rf_err}) — "
+                f"using rule-based fallback")
+
 # ── Logging ───────────────────────────────────────────────
 logging.basicConfig(
     level    = logging.INFO,
@@ -466,15 +479,40 @@ def _quarantine_file(file_path: str, event: dict | None = None,
 
 class DecisionEngine:
     """
-    Wraps the trained DQN agent and falls back to the
-    rule-based detector when the model cannot be loaded.
+    Selects the decision engine and wraps it, falling back to the
+    rule-based detector when a requested model cannot be loaded.
+
+    Engine selection (config.AI_ENGINE / ENTROPY_AI_ENGINE):
+      auto / rules (default) — the deterministic rule engine. This is
+            the measured 0-false-quarantine safety bar, so it is the
+            default even when trained models exist.
+      rf — the Random Forest second classifier (calibrated, SHAP-
+           explained risk). Opt-in: measured on the benchmark battery
+           it detects 100% of attacks (including the image blind
+           spot) but false-quarantines high-entropy media workloads.
+      dqn — the trained DQN (opt-in).
+
+    Hard-confirmation signals (ransom note, defense tamper,
+    exchange-confirmed fingerprint) are applied BEFORE any learned
+    engine, so no model can ever talk the pipeline out of a
+    confirmed incident.
     """
 
-    def __init__(self):
+    def __init__(self, engine: str | None = None):
+        self.requested = (engine or config.AI_ENGINE or "auto").lower()
+        if self.requested not in ("auto", "rules", "dqn", "rf"):
+            log.warning("[DECISION] Unknown ENTROPY_AI_ENGINE %r — "
+                        "using rules", self.requested)
+            self.requested = "auto"
         self.agent = None
+        self.rf = None
         self.using_dqn = False
+        self.using_rf = False
 
-        if _DQN_AVAILABLE and DQNAgent is not None:
+        # Learned engines are explicit opt-ins; the default is the
+        # deterministic rule engine.
+        if self.requested == "dqn" and _DQN_AVAILABLE \
+                and DQNAgent is not None:
             try:
                 self.agent = DQNAgent()
                 model_path = os.path.join(
@@ -489,16 +527,71 @@ class DecisionEngine:
                                     "falling back to rules")
                 else:
                     log.warning("[DECISION] No dqn_weights.pth — "
-                                "using rule-based engine")
+                                "falling back to rules")
             except Exception as e:
                 log.warning(f"[DECISION] DQN init error ({e}) — rules")
+
+        if self.requested == "rf" and _RF_AVAILABLE \
+                and RFEngine is not None:
+            rf_model_path = os.path.join(config.AI_DIR, "rf_weights.json")
+            if os.path.exists(rf_model_path):
+                try:
+                    self.rf = RFEngine(rf_model_path)
+                    self.using_rf = True
+                    log.info("[DECISION] Random Forest model loaded ✅")
+                except Exception as e:
+                    log.warning(f"[DECISION] RF load failed ({e}) — "
+                                "falling back to rules")
+            else:
+                log.warning("[DECISION] No rf_weights.json — falling "
+                            "back to rules (train with "
+                            "python -m ai.train_rf)")
+
+    def _active_engine(self) -> str:
+        if self.requested == "dqn":
+            return "dqn" if self.using_dqn else "rules"
+        if self.requested == "rf":
+            return "rf" if self.using_rf else "rules"
+        return "rules"
+
+    def engine_name(self) -> str:
+        return self._active_engine()
 
     def decide(self, event: dict) -> dict:
         """
         Return a decision dict compatible with the response layer:
         { 'action', 'action_name', 'confidence', 'explanation' }
         """
-        if self.using_dqn:
+        # ── Hard-confirmation signals apply to EVERY engine ──
+        # A dropped ransom note, a destroyed recovery capability, or
+        # a fingerprint the exchange has confirmed is a confirmed
+        # incident on its own — no model may override it.
+        if (event.get("ransom_note") or event.get("defense_tamper")
+                or event.get("known_threat_confirmed")):
+            explanation = "Hard-confirmation signal"
+            if event.get("ransom_note"):
+                explanation += " | RANSOM NOTE: " + "; ".join(
+                    event.get("ransom_note_evidence") or []
+                )
+            if event.get("defense_tamper"):
+                explanation += " | DEFENSE TAMPER: " + "; ".join(
+                    event.get("defense_tamper_evidence") or []
+                )
+            if event.get("known_threat_confirmed"):
+                explanation += " | KNOWN THREAT (CONFIRMED BY EXCHANGE): " \
+                    + str(event.get("known_threat_evidence") or "")
+            return {
+                "action"      : config.ACTION_TERMINATE_QUARANTINE,
+                "action_name" : ACTION_LABELS[config.ACTION_TERMINATE_QUARANTINE],
+                "confidence"  : 1.0,
+                "explanation" : explanation,
+                "q_values"    : None,
+                "engine"      : self.engine_name(),
+            }
+
+        active = self._active_engine()
+
+        if active == "dqn":
             try:
                 decision = self.agent.decide(event)
                 return {
@@ -511,6 +604,37 @@ class DecisionEngine:
                 }
             except Exception as e:
                 log.warning(f"[DECISION] DQN inference error ({e}) — "
+                            f"falling back to rules")
+
+        if active == "rf":
+            try:
+                result = self.rf.score(event)
+                action = int(result["action"])
+                # Exchange corroboration floor: a SINGLE node's
+                # sighting can raise an ignore to an alert but can
+                # never quarantine alone (poison-node defence).
+                if (event.get("known_threat")
+                        and not event.get("known_threat_confirmed")
+                        and action < config.ACTION_ALERT):
+                    action = config.ACTION_ALERT
+                explanation = result["explanation"]
+                if event.get("known_threat"):
+                    explanation += (
+                        " | KNOWN THREAT (CORROBORATED BY EXCHANGE): "
+                        + str(event.get("known_threat_evidence") or "")
+                    )
+                return {
+                    "action"      : action,
+                    "action_name" : ACTION_LABELS.get(action, "UNKNOWN"),
+                    "confidence"  : float(result["probability"]),
+                    "explanation" : explanation,
+                    "q_values"    : None,
+                    "engine"      : "rf",
+                    "risk"        : float(result["risk"]),
+                    "top_features": result.get("top_features"),
+                }
+            except Exception as e:
+                log.warning(f"[DECISION] RF inference error ({e}) — "
                             f"falling back to rules")
 
         action = make_decision(event)
@@ -589,8 +713,13 @@ class PipelineRunner:
         print(f"  Dashboard  : http://localhost:{config.DASHBOARD_PORT}")
         print(f"  Blockchain : {config.GANACHE_URL}")
         print(f"  DB         : {config.DB_PATH}")
+        _engine_labels = {
+            "rules": "Rule-based (default)",
+            "dqn": "DQN (trained)",
+            "rf": "Random Forest (calibrated, SHAP-explained)",
+        }
         print(f"  AI Engine  : "
-              f"{'DQN (trained)' if self.engine.using_dqn else 'Rule-based'}")
+              f"{_engine_labels.get(self.engine.engine_name(), 'Rule-based')}")
         print(f"  Dry-run    : {config.DRY_RUN}")
         print("=" * 60)
         print()

@@ -28,6 +28,21 @@ This project is a **controlled teaching lab**, not endpoint protection.
   come from persisted events, not fabricated demo scores.
 - Training data is synthetic and versioned (`schema_version` 1) with a
   held-out evaluation split.
+- The **Random Forest second classifier** (`ai/rf_weights.json`,
+  `python -m ai.train_rf`) is trained on seeded synthetic data
+  (versioned schema, 11 features) and is an **opt-in** engine
+  (`ENTROPY_AI_ENGINE=rf`). Measured on the benchmark battery it
+  detects 48/48 attacks (including the image blind spot) but
+  false-quarantines 6 legitimate media runs (photo/video import), so it
+  is **not the default**: the deterministic rule engine keeps the
+  0-false-quarantine bar. Its per-incident SHAP explanations name the
+  top features of each decision; without SHAP installed, explanations
+  fall back to the forest's global feature importances. Synthetic
+  training data does not predict real-world prevalence — the battery is
+  the measured comparison.
+- Hard-confirmation signals (ransom note, defense tamper,
+  exchange-confirmed fingerprint) are applied **before** any learned
+  engine, so no model can downgrade a confirmed incident.
 
 ## Blockchain
 
