@@ -392,6 +392,37 @@ def write_markdown(summary: dict, out_path: Path) -> Path:
                 f"Candidates for future signals: magic-byte validation, "
                 f"partial-encryption (front) detection, and size anomalies.")
         add("")
+    fx = summary.get("federated_exchange")
+    if fx and "error" not in fx:
+        add("## Federated exchange (multi-node simulation)")
+        add("")
+        add("Four simulated tenants share one threat-fingerprint registry "
+            "and drive the real decision + response chain. A fingerprint "
+            f"contained by >= {fx.get('confirm_threshold', 2)} independent "
+            "nodes auto-confirms; a single node's sighting only "
+            "corroborates and can never quarantine alone (the poison-node "
+            "defence).")
+        add("")
+        add("| Metric | Value |")
+        add("| --- | --- |")
+        add(f"| Known-threat recall at first sight "
+            f"(confirmed, auto-quarantine) | "
+            f"**{fx['known_threat_recall_first_sight']}** "
+            f"({fx['known_threat_recall_pct']}%) |")
+        add(f"| Single-sighting restraint "
+            f"(recognised, NOT over-quarantined) | "
+            f"{fx['single_sighting_restraint']} "
+            f"({fx['single_sighting_restraint_pct']}%) |")
+        add(f"| Workload false positives "
+            f"(legitimate files alerted) | "
+            f"{fx['workload_false_positives']}/{fx['workload_runs']} |")
+        add("")
+        add("Headline: a fresh node with zero local history quarantined a "
+            "locally-ambiguous file (score 40, alert-only) purely on "
+            "cross-node memory. Run "
+            "`python -m benchmark.exchange_simulation`; see "
+            "`docs/federated-exchange.md`.")
+        add("")
     add("## Method")
     add("")
     add("- Deterministic: all content and timing are seeded "
@@ -427,6 +458,21 @@ def main(argv=None) -> int:
     runs = run_battery(seeds=seeds)
     summary = summarize(runs)
 
+    # Federated-exchange metrics: run the multi-node simulation in an
+    # isolated temp store so the published report carries the
+    # known-threat recall numbers alongside the detection battery.
+    from benchmark.exchange_simulation import run_simulation
+    sim_dir = Path(tempfile.mkdtemp(prefix="exchange_bench_"))
+    try:
+        sim = run_simulation(base_dir=str(sim_dir))
+        summary["federated_exchange"] = sim["recall_metrics"] | {
+            "confirm_threshold": sim["confirm_threshold"],
+        }
+    except Exception as exc:  # the detection battery still publishes
+        summary["federated_exchange"] = {"error": str(exc)}
+    finally:
+        shutil.rmtree(sim_dir, ignore_errors=True)
+
     repo_root = Path(__file__).resolve().parents[1]
     json_path = write_json(summary, repo_root / "benchmark" / "results")
     md_path = write_markdown(summary, repo_root / "docs" / "benchmark-report.md")
@@ -441,6 +487,11 @@ def main(argv=None) -> int:
         print(f"  Legit FP rate      : {s['legitimate_alerted']}/"
               f"{s['legitimate_runs']} ({s['false_positive_rate']}%)")
         print(f"  False quarantines  : {s['false_quarantines']}")
+        fx = summary.get("federated_exchange")
+        if fx and "error" not in fx:
+            print(f"  Known-threat recall: "
+                  f"{fx['known_threat_recall_first_sight']} "
+                  f"({fx['known_threat_recall_pct']}%)")
         print("-" * 64)
         print("  Attacks (detected/runs | quarantined | median ops):")
         for name, row in summary["attacks"].items():

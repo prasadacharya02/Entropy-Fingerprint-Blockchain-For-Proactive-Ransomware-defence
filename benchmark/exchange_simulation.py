@@ -216,19 +216,23 @@ def run_simulation(base_dir: str | None = None) -> dict:
         (tenant.root / "Documents/financials_q3.qrx").write_bytes(payload)
         return tenant.process("Documents/financials_q3.qrx", "CREATED")
 
-    # Keep execute_response's forensic reports inside the simulation.
+    # Keep execute_response's side effects (forensic reports, quarantined
+    # copies) inside the simulation, not the repo.
     import contextlib
 
     @contextlib.contextmanager
-    def _reports_to_sim():
-        original = config.REPORTS_DIR
+    def _side_effects_to_sim():
+        original_reports = config.REPORTS_DIR
+        original_quarantine = config.QUARANTINE_DIR
         config.REPORTS_DIR = str(reports_dir)
+        config.QUARANTINE_DIR = str(base / "quarantine")
         try:
             yield
         finally:
-            config.REPORTS_DIR = original
+            config.REPORTS_DIR = original_reports
+            config.QUARANTINE_DIR = original_quarantine
 
-    with _reports_to_sim():
+    with _side_effects_to_sim():
         # ── Phase 1: cold start (empty exchange) ────────────
         cold = ambiguous_run(charlie)
         phases.append({
@@ -307,6 +311,43 @@ def run_simulation(base_dir: str | None = None) -> dict:
 
     payload_fp = hashlib.sha256(payload_bytes()).hexdigest()
 
+    # Known-threat metrics at first sight. A "first-sight encounter" is a
+    # fresh node meeting a fingerprint already in the exchange:
+    #   - recall:    sources >= threshold -> must auto-quarantine
+    #   - restraint: sources <  threshold -> corroborate, NOT quarantine
+    recall_encounters = 0
+    recall_confirmed = 0
+    restraint_encounters = 0
+    restraint_held = 0
+    workload_runs = 0
+    workload_false_positives = 0
+    for phase in phases:
+        if phase["phase"] in ("3_single_sighting", "5_warm_start"):
+            rec = phase["result"]
+            if phase["phase"] == "5_warm_start":
+                recall_encounters += 1
+                if rec["known_threat_confirmed"] and \
+                        rec["action"] == config.ACTION_TERMINATE_QUARANTINE:
+                    recall_confirmed += 1
+            else:
+                restraint_encounters += 1
+                if rec["known_threat"] and \
+                        rec["action"] != config.ACTION_TERMINATE_QUARANTINE:
+                    restraint_held += 1
+        elif phase["phase"] == "6_workload_honesty":
+            workload_runs += len(phase["ops"])
+            workload_false_positives += sum(
+                1 for o in phase["ops"] if o["action"] >= config.ACTION_ALERT
+            )
+    recall_pct = (
+        round(100.0 * recall_confirmed / recall_encounters, 1)
+        if recall_encounters else 0.0
+    )
+    restraint_pct = (
+        round(100.0 * restraint_held / restraint_encounters, 1)
+        if restraint_encounters else 0.0
+    )
+
     report = {
         "generated": datetime.now().isoformat(),
         "exchange_db": str(shared_db),
@@ -314,6 +355,18 @@ def run_simulation(base_dir: str | None = None) -> dict:
         "phases": phases,
         "exchange_records": records,
         "payload_fingerprint": payload_fp[:16] + "…",
+        "recall_metrics": {
+            "known_threat_recall_first_sight": (
+                f"{recall_confirmed}/{recall_encounters}"
+            ),
+            "known_threat_recall_pct": recall_pct,
+            "single_sighting_restraint": (
+                f"{restraint_held}/{restraint_encounters}"
+            ),
+            "single_sighting_restraint_pct": restraint_pct,
+            "workload_false_positives": workload_false_positives,
+            "workload_runs": workload_runs,
+        },
         "headline": {
             "cold_start_action": cold["action_name"],
             "single_sighting_action": single["action_name"],
