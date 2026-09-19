@@ -267,12 +267,11 @@ class FileQuarantine:
     4. Create metadata file alongside it
     5. Set restricted permissions
 
-# REPLACE WITH THIS:
     QUARANTINE DIRECTORY:
     ---------------------
-    Entropy/quarantine_storage/
+    quarantine_storage/
     - {hash}_{original_name}        (the quarantined file)
-    - {hash}_{original_name}.meta   (metadata about it)
+    - {hash}_{original_name}.meta.json (metadata about it)
     """
 
     def __init__(self):
@@ -388,9 +387,11 @@ class FileQuarantine:
                                if event else None),
         }
 
-        meta_path = quarantine_path + '.meta'
+        # The dashboard's /api/quarantine endpoint reads ".meta.json"
+        # sidecars — keep this name as the single source of truth.
+        meta_path = quarantine_path + '.meta.json'
         try:
-            with open(meta_path, 'w') as f:
+            with open(meta_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, indent=2)
         except Exception as e:
             log.error(f"[QUARANTINE] Metadata error: {e}")
@@ -400,7 +401,7 @@ class FileQuarantine:
         quarantined = []
         try:
             for fname in os.listdir(self.quarantine_dir):
-                if fname.endswith('.meta'):
+                if fname.endswith('.meta') or fname.endswith('.meta.json'):
                     continue
                 fpath = os.path.join(self.quarantine_dir, fname)
                 quarantined.append({

@@ -68,15 +68,54 @@ class EventStore:
 
 
 class ProcessFinder:
-    """Fast, non-blocking process attribution."""
+    """Fast, non-blocking process attribution with explicit verification.
+
+    Attribution is two-tier:
+      1. open-file evidence  — a process holds the file open right now,
+         so its identity is verified;
+      2. recent-process guess — the youngest non-whitelisted process,
+         which is NEVER treated as verified identity (the response layer
+         refuses to act on unverified attribution).
+    """
+
+    GUESS_MAX_AGE_SECONDS = 120
+
     def __init__(self):
         pass
-    
-    def get_process_info(self, file_path):
+
+    def _find_by_open_file(self, file_path):
+        """Return the process that currently holds *file_path* open."""
+        try:
+            target = os.path.realpath(file_path)
+        except OSError:
+            return None
+
+        for proc in psutil.process_iter(['pid', 'name', 'create_time']):
+            try:
+                for opened in proc.open_files():
+                    try:
+                        if os.path.realpath(opened.path) == target:
+                            return {
+                                'pid': proc.info['pid'],
+                                'name': proc.info.get('name') or proc.name(),
+                                'create_time': proc.info.get('create_time'),
+                                'identity_verified': True,
+                            }
+                    except (OSError, ValueError):
+                        continue
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return None
+
+    def _find_recent_suspicious(self, max_age_seconds=None):
+        """Guess: the youngest non-whitelisted process (unverified)."""
+        if max_age_seconds is None:
+            max_age_seconds = self.GUESS_MAX_AGE_SECONDS
+
         suspicious = []
         current_time = time.time()
         whitelist = {name.lower() for name in getattr(config, "WHITELISTED_PROCESSES", [])}
-        
+
         try:
             for proc in psutil.process_iter(['pid', 'name', 'create_time']):
                 try:
@@ -85,7 +124,7 @@ class ProcessFinder:
                     if process_name.lower() in whitelist:
                         continue
                     create_time = proc_info.get('create_time')
-                    if create_time and (current_time - create_time) < 120:
+                    if create_time and (current_time - create_time) < max_age_seconds:
                         suspicious.append({
                             'pid': proc_info['pid'],
                             'name': process_name,
@@ -97,11 +136,35 @@ class ProcessFinder:
                     continue
         except Exception:
             pass
-        
-        if suspicious:
-            suspicious.sort(key=lambda x: x['age_seconds'])
-            return suspicious[0]
-        return {"pid": 0, "name": "unknown", "identity_verified": False}
+
+        if not suspicious:
+            return None
+        suspicious.sort(key=lambda x: x['age_seconds'])
+        return suspicious[0]
+
+    def get_process_info(self, file_path):
+        verified = self._find_by_open_file(file_path)
+        if verified:
+            info = dict(verified)
+            info['identity_verified'] = True
+            info['attribution_source'] = 'open_file'
+            return info
+
+        guess = self._find_recent_suspicious()
+        if guess:
+            info = dict(guess)
+            # A recent-process guess must never be treated as verified
+            # identity, regardless of what the heuristic reports.
+            info['identity_verified'] = False
+            info['attribution_source'] = 'recent_process_guess'
+            return info
+
+        return {
+            'pid': 0,
+            'name': 'unknown',
+            'identity_verified': False,
+            'attribution_source': 'none',
+        }
 
 
 class SpeedTracker:
@@ -135,11 +198,15 @@ class SpeedTracker:
 
 
 class EntropyEventHandler(FileSystemEventHandler):
-    def __init__(self, event_store, speed_tracker, process_finder):
+    def __init__(self, event_store, speed_tracker, process_finder,
+                 protected_stores=None):
         super().__init__()
         self.event_store    = event_store
         self.speed_tracker  = speed_tracker
         self.process_finder = process_finder
+        self.protected_stores = protected_stores or (
+            config.QUARANTINE_DIR, config.BACKUP_DIR
+        )
     
     def on_created(self, event):
         if not event.is_directory:
@@ -159,7 +226,7 @@ class EntropyEventHandler(FileSystemEventHandler):
     
     def _handle(self, event_type, file_path, dest_path=None):
         target_path = dest_path if dest_path else file_path
-        if self._should_ignore(target_path):
+        if self._should_ignore(event_type, target_path):
             return
         
         self.speed_tracker.record_event()
@@ -201,15 +268,29 @@ class EntropyEventHandler(FileSystemEventHandler):
         fname = os.path.basename(target_path)
         log.info(f"{sym} {event_type:8} | {fname:35} | {rate:.1f} ev/sec")
     
-    def _should_ignore(self, file_path):
+    def _should_ignore(self, event_type, file_path):
         p = file_path.lower()
         if p.endswith('.tmp') or p.endswith('.temp') or p.endswith('.log'):
             return True
         fn = os.path.basename(file_path)
         if fn.startswith('~') or fn.startswith('.'):
             return True
-        if config.QUARANTINE_DIR.lower() in p or config.LOG_DIR.lower() in p:
+        if config.LOG_DIR.lower() in p:
             return True
+        # Our own defense stores: only deletions are meaningful
+        # (defense tamper). Writes there are the defender's own
+        # quarantine/backup operations and must stay silent.
+        if FileMonitor._is_protected_store_path(
+            file_path, self.protected_stores
+        ):
+            if event_type != "DELETED":
+                return True
+            # The backup store's own housekeeping (manifest rewrites
+            # via os.replace, temp files) deletes these names itself;
+            # they are not tampering.
+            name = os.path.basename(file_path)
+            if name == "manifest.json" or ".tmp" in name:
+                return True
         return False
     
     def _check_ext_changed(self, src_path, dest_path):
@@ -224,22 +305,47 @@ class FileMonitor:
         self.event_store    = EventStore()
         self.speed_tracker  = SpeedTracker()
         self.process_finder = ProcessFinder()
-        self.handler        = EntropyEventHandler(self.event_store, self.speed_tracker, self.process_finder)
+        # The defender's own stores are always watched, but only for
+        # DELETIONS: writes there are our own quarantine/backup
+        # operations (feedback loop), while deletions there mean the
+        # attacker is destroying recovery capability.
+        self.protected_stores = (config.BACKUP_DIR, config.QUARANTINE_DIR)
+        self.handler = EntropyEventHandler(
+            self.event_store, self.speed_tracker, self.process_finder,
+            protected_stores=self.protected_stores,
+        )
         self.observer       = Observer(timeout=0.2)
         self.running        = False
-    
+
+    @staticmethod
+    def _is_protected_store_path(file_path: str, stores) -> bool:
+        target = os.path.abspath(file_path).lower()
+        return any(
+            target == os.path.abspath(store).lower() or
+            target.startswith(os.path.abspath(store).lower() + os.sep)
+            for store in stores
+        )
+
     def start(self):
         log.info("=" * 60)
         log.info("  ENTROPY Polling File Monitor Active")
         log.info("=" * 60)
-        
+
         watched = 0
         for folder in config.WATCH_FOLDERS:
             if os.path.exists(folder):
                 self.observer.schedule(self.handler, folder, recursive=True)
                 log.info(f"[WATCHING RECURSIVE] {folder}")
                 watched += 1
-        
+
+        for store in self.protected_stores:
+            if os.path.exists(store) and not any(
+                os.path.abspath(store) == os.path.abspath(folder)
+                for folder in config.WATCH_FOLDERS
+            ):
+                self.observer.schedule(self.handler, store, recursive=True)
+                log.info(f"[WATCHING PROTECTED STORE] {store}")
+
         self.observer.start()
         self.running = True
     

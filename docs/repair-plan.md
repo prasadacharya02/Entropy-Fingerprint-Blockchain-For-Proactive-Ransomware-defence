@@ -4,7 +4,7 @@ This plan converts the repository from several loosely connected prototypes
 into a reproducible, safe lab application. Each day should finish with a clean
 working tree, automated checks, and documented behavior.
 
-## Day 1 — Repository foundation
+## Day 1 — Repository foundation (implemented)
 
 **Scope**
 
@@ -24,21 +24,21 @@ working tree, automated checks, and documented behavior.
 - `python main.py` exits nonzero when dependencies are missing.
 - `python -m unittest discover -s tests -v` passes without third-party packages.
 
-## Day 2 — Unified application integration
+## Day 2 — Unified application integration (implemented)
 
 - Select one orchestrator and retire duplicate execution paths.
 - Add one launcher for pipeline, dashboard, attacker, and victim services (`lab.py`).
 - Connect the controlled victim fixture directory to the detector.
 - Add graceful startup/shutdown and integration tests.
 
-## Day 3 — Safe response and process attribution
+## Day 3 — Safe response and process attribution (implemented)
 
 - Default destructive responses to dry-run (`ENTROPY_DRY_RUN=true`).
 - Replace "most recent process" attribution with open-file verification; guesses stay unverified.
 - Record requested actions separately from actual outcomes (`requested_action`, `outcome`, `dry_run`).
 - Add termination and quarantine safety tests.
 
-## Day 4 — Detection and event-pipeline correctness
+## Day 4 — Detection and event-pipeline correctness (implemented)
 
 - Make entropy history rename-aware.
 - Hash complete files while keeping bounded entropy sampling.
