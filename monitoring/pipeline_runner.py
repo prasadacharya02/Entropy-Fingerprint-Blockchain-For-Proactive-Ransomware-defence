@@ -16,6 +16,7 @@ import time
 import json
 import hashlib
 import logging
+from collections import deque
 from datetime import datetime
 from threading import Thread
 
@@ -26,6 +27,7 @@ from monitoring.event_pipeline   import EventPipeline
 from blockchain.connector        import BlockchainConnector
 from response.response_module     import FileQuarantine, ProcessTerminator
 from response.backup_manager     import BackupManager
+from storage.hashing             import sha256_file
 from response.forensic_report    import generate_report
 from storage.database             import init_db as initialize_database
 
@@ -477,6 +479,117 @@ def _quarantine_file(file_path: str, event: dict | None = None,
 # (fallback). Both produce an action in the same 0-3 space.
 # ============================================================
 
+class CampaignTracker:
+    """Cross-file campaign detection for ransomware.
+
+    The per-file score is deliberately conservative: one high-entropy
+    file is not proof (video writes, archive creation and photo
+    imports all produce high-entropy content). Ransomware is, by
+    definition, multi-file: the same threat touches many files in
+    rapid succession. This tracker remembers recent suspicious files
+    and confirms a campaign when ``CAMPAIGN_MIN_FILES`` distinct files
+    all carry an encrypted-data signature inside
+    ``CAMPAIGN_WINDOW_SECONDS``:
+
+      * entropy >= ENTROPY_THRESHOLD (looks like encrypted data), AND
+      * behavioural corroboration: an entropy jump of at least
+        ENTROPY_DELTA_THRESHOLD (the file used to be something else)
+        OR a rename to a new extension (disguise).
+
+    Files that merely produce high entropy without corroboration
+    (a new video, an imported zip, …) never enter the tracker, so
+    legitimate media workloads can never confirm a campaign.
+
+    The tracker also remembers the most recent process verified as
+    holding a suspicious file open (``last_verified``). On escalation
+    that attribution is the kill target — by the time a campaign is
+    confirmed the newest file's handle may already be closed, but the
+    malware process is the same one that wrote the earlier files.
+    """
+
+    def __init__(self):
+        # (timestamp, path, event, action)
+        self.entries: deque = deque()
+        self.last_verified = None  # (timestamp, process dict)
+
+    def reset(self):
+        self.entries.clear()
+        self.last_verified = None
+
+    @staticmethod
+    def _qualifies(event: dict) -> bool:
+        ent = event.get("entropy_overall") or 0.0
+        if ent < config.ENTROPY_THRESHOLD:
+            return False
+        delta = abs(event.get("entropy_delta") or 0.0)
+        return (delta >= config.ENTROPY_DELTA_THRESHOLD
+                or bool(event.get("ext_changed")))
+
+    @staticmethod
+    def _verified_process(event: dict) -> dict | None:
+        proc = event.get("process")
+        if not isinstance(proc, dict):
+            return None
+        if not (proc.get("identity_verified") and proc.get("pid")):
+            return None
+        # Never let the defender's own software be a kill target.
+        cmdline = str(proc.get("cmdline") or "").lower()
+        if any(marker in cmdline for marker in config.DEFENDER_TOOLING_MARKERS):
+            return None
+        return dict(proc)
+
+    def check_and_record(self, event: dict,
+                         action: int) -> tuple[bool, list, dict | None]:
+        """Record ``event`` and report whether a campaign is confirmed.
+
+        Returns ``(escalate, sweep_events, kill_override)``:
+          escalate      — act as TERMINATE_QUARANTINE for this event
+          sweep_events  — other campaign files to quarantine + restore
+          kill_override — recently verified malware process, used when
+                          this event's own attribution is missing
+        """
+        now = time.time()
+        window = config.CAMPAIGN_WINDOW_SECONDS
+        while self.entries and now - self.entries[0][0] > window:
+            self.entries.popleft()
+        if self.last_verified and now - self.last_verified[0] > window:
+            self.last_verified = None
+
+        verified = self._verified_process(event)
+        if verified is not None:
+            self.last_verified = (now, verified)
+
+        if not self._qualifies(event):
+            return False, [], None
+
+        path = os.path.normpath(event.get("file_path") or "")
+        others = [e for (_t, p, e, a) in self.entries
+                  if p != path and a >= config.ACTION_ALERT]
+        escalate = (action >= config.ACTION_ALERT
+                    and len(others) >= config.CAMPAIGN_MIN_FILES - 1)
+
+        # Keep this event for the window (and for later sweeps).
+        self.entries.append((now, path, event, action))
+        if not escalate:
+            return False, [], None
+
+        # Sweep: the other campaign files that are still on disk.
+        sweep = []
+        seen = set()
+        for (_t, p, e, a) in self.entries:
+            if p == path or p in seen or a < config.ACTION_ALERT:
+                continue
+            target = e.get("file_path") or p
+            if os.path.exists(target):
+                seen.add(p)
+                sweep.append(dict(e))
+
+        kill_override = (None if verified is not None
+                         else (self.last_verified[1]
+                               if self.last_verified else None))
+        return True, sweep, kill_override
+
+
 class DecisionEngine:
     """
     Selects the decision engine and wraps it, falling back to the
@@ -498,7 +611,15 @@ class DecisionEngine:
     confirmed incident.
     """
 
-    def __init__(self, engine: str | None = None):
+    def __init__(self, engine: str | None = None,
+                 campaign: bool | None = None):
+        # Cross-file campaign escalation (multi-file confirmation)
+        # applies on top of whichever base engine decides. Off by
+        # explicit request (tests that must exercise the bare
+        # per-file behaviour).
+        self.campaign = (config.CAMPAIGN_ENABLED
+                         if campaign is None else bool(campaign))
+        self.campaign_tracker = CampaignTracker()
         self.requested = (engine or config.AI_ENGINE or "auto").lower()
         if self.requested not in ("auto", "rules", "dqn", "rf"):
             log.warning("[DECISION] Unknown ENTROPY_AI_ENGINE %r — "
@@ -557,10 +678,49 @@ class DecisionEngine:
     def engine_name(self) -> str:
         return self._active_engine()
 
+    def reset(self):
+        """Clear campaign state (used between isolated test/benchmark
+        scenarios; in live operation the rolling window simply ages
+        out on its own)."""
+        self.campaign_tracker.reset()
+
     def decide(self, event: dict) -> dict:
         """
         Return a decision dict compatible with the response layer:
         { 'action', 'action_name', 'confidence', 'explanation' }
+        plus, when campaign tracking is active, optional keys:
+        { 'sweep_events': [...], 'kill_override': {...}, 'campaign': bool }
+        """
+        decision = self._base_decide(event)
+        if not self.campaign:
+            return decision
+
+        action = int(decision.get("action", 0))
+        escalate, sweep, kill_override = (
+            self.campaign_tracker.check_and_record(event, action)
+        )
+        if not escalate:
+            return decision
+
+        if action < config.ACTION_TERMINATE_QUARANTINE:
+            decision["action"] = config.ACTION_TERMINATE_QUARANTINE
+            decision["action_name"] = ACTION_LABELS[
+                config.ACTION_TERMINATE_QUARANTINE]
+        decision["campaign"] = True
+        decision["sweep_events"] = sweep
+        decision["kill_override"] = kill_override
+        prior = decision.get("explanation") or ""
+        decision["explanation"] = (
+            f"CAMPAIGN CONFIRMED: {len(sweep) + 1} files with "
+            f"encrypted-data signatures in "
+            f"{int(config.CAMPAIGN_WINDOW_SECONDS)}s | {prior}"
+        ).strip(" |")
+        return decision
+
+    def _base_decide(self, event: dict) -> dict:
+        """
+        Per-event decision from the selected engine (rules / rf / dqn)
+        plus the hard-confirmation signals — before campaign logic.
         """
         # ── Hard-confirmation signals apply to EVERY engine ──
         # A dropped ransom note, a destroyed recovery capability, or
@@ -797,7 +957,12 @@ class PipelineRunner:
                     log.warning(
                         f"[BACKUP] Transfer failed for {file_path}: {e}")
             try:
-                self.backup.capture(file_path, event=event)
+                # strict=True: this capture is event-time, so the
+                # triggering event is suspicious and the current content
+                # is the "after" state (likely ciphertext). The lenient
+                # 0.5 margin would label office-format ciphertext
+                # (7.8-8.0) as clean and let restore put it back.
+                self.backup.capture(file_path, event=event, strict=True)
             except Exception as e:
                 log.warning(f"[BACKUP] Capture failed for {file_path}: {e}")
 
@@ -805,10 +970,65 @@ class PipelineRunner:
         decision = self.engine.decide(event)
         action   = decision["action"]
 
+        # ── Campaign kill override ───────────────────
+        # When a campaign is confirmed, this event's own process
+        # attribution can be missing (a RENAMED event fires after the
+        # handle is closed). Use the process the tracker verified as
+        # writing the earlier campaign files — the malware is the same
+        # process across the whole attack.
+        if (action >= config.ACTION_TERMINATE
+                and decision.get("kill_override")):
+            proc = event.get("process")
+            if not (isinstance(proc, dict)
+                    and proc.get("identity_verified")
+                    and proc.get("pid")):
+                event = dict(event)
+                event["process"] = decision["kill_override"]
+                log.warning(
+                    f"  [KILL] Using campaign-verified process "
+                    f"PID:{decision['kill_override'].get('pid')} "
+                    f"({decision['kill_override'].get('name')})")
+
         # ── Execute response ───────────────────────
         status = execute_response(
             action, event, self.bc, self.db, decision, backup=self.backup
         )
+
+        # ── Campaign sweep ───────────────────────────
+        # Quarantine + restore the remaining campaign files the
+        # confirmed malware touched. The process is already dealt with
+        # above, so the sweep events carry no kill intent.
+        for sweep_event in (decision.get("sweep_events") or []):
+            se = dict(sweep_event)
+            se_proc = se.get("process")
+            if isinstance(se_proc, dict) and se_proc.get("pid"):
+                se_proc = dict(se_proc, identity_verified=False)
+                se["process"] = se_proc
+            se_decision = dict(decision)
+            se_decision["explanation"] = "Campaign sweep: " + \
+                str(decision.get("explanation") or "")
+            try:
+                sweep_status = execute_response(
+                    config.ACTION_TERMINATE_QUARANTINE, se,
+                    self.bc, self.db, se_decision, backup=self.backup
+                )
+                self.stats["quarantined"] += 1
+                log.warning(
+                    f"  [SWEEP] {os.path.basename(se.get('file_path',''))} "
+                    f"→ {sweep_status}")
+            except Exception as e:
+                log.error(f"  [SWEEP] Failed for "
+                          f"{se.get('file_path')}: {e}")
+
+        # ── Post-kill verification ─────────────────────
+        # The process can be killed while writing a file that has not
+        # yet produced its own detection event (or one that scored
+        # below the alert bar): its ciphertext would remain on disk
+        # after the campaign sweep. Walk the estate once and repair
+        # whatever is still encrypted.
+        if (decision.get("campaign")
+                and action >= config.ACTION_TERMINATE):
+            self._post_kill_verification()
 
         # ── Mirror the rename-back in the entropy history ──
         # execute_response may have moved a renamed file back to its
@@ -833,6 +1053,110 @@ class PipelineRunner:
         elif action == config.ACTION_TERMINATE_QUARANTINE:
             self.stats["terminated"]  += 1
             self.stats["quarantined"] += 1
+
+    def _post_kill_verification(self):
+        """Walk the protected estate once after a confirmed campaign kill.
+
+        A process can die mid-write on a file that has not produced its
+        own detection event yet (or one that scored below the alert
+        bar); the campaign sweep does not know about such a file. This
+        pass repairs the remainder: quarantines the replaced content,
+        restores the last clean version, and re-primes the entropy
+        history.
+
+        The repair signal is CONTENT, not entropy level: a file is
+        repaired only when its current hash differs from the hash of
+        its last clean version. High entropy alone is not evidence —
+        photos, videos and archives are legitimately high-entropy and
+        legitimately untouched, and must never be quarantined on that
+        basis. Files with no clean backup version cannot be
+        auto-repaired and are left in place for manual recovery.
+        """
+        log.warning("  [SWEEP] Post-kill verification scan ...")
+        repaired = 0
+        seen = set()
+        for root_dir in config.WATCH_FOLDERS:
+            if not os.path.isdir(root_dir):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(root_dir):
+                for name in filenames:
+                    path = os.path.join(dirpath, name)
+                    apath = os.path.abspath(path)
+                    if apath in seen:
+                        continue
+                    seen.add(apath)
+                    try:
+                        candidate = self.backup.find_restore_candidate(path)
+                    except Exception:
+                        continue
+                    if candidate is None or not candidate.get("sha256"):
+                        continue
+                    try:
+                        current_sha = sha256_file(path)
+                    except OSError:
+                        continue
+                    if current_sha == candidate["sha256"]:
+                        continue  # identical to the last clean state
+                    try:
+                        result = self.pipeline.entropy_analyzer.analyze(path)
+                    except Exception:
+                        result = {}
+                    entropy = float(result.get("entropy_overall") or 0.0)
+                    log.warning(
+                        f"  [SWEEP] {name}: content differs from last clean "
+                        f"version (H={entropy:.2f}) — quarantining + "
+                        f"restoring")
+                    event = {
+                        "event_id": (
+                            f"postkill-{int(time.time() * 1000)}-"
+                            f"{os.path.basename(path)}"),
+                        "timestamp": datetime.now().isoformat(),
+                        "event_type": "SWEEP",
+                        "file_path": path,
+                        "file_extension": os.path.splitext(name)[1].lower(),
+                        "file_hash": result.get("file_hash", ""),
+                        "entropy_overall": entropy,
+                        "entropy_delta": 0.0,
+                        "threat_score": result.get("threat_score", 0.0),
+                        "process": {},
+                    }
+                    decision = {
+                        "action": config.ACTION_TERMINATE_QUARANTINE,
+                        "action_name": ACTION_LABELS[
+                            config.ACTION_TERMINATE_QUARANTINE],
+                        "explanation": (
+                            "Post-kill verification: encrypted content "
+                            "present after campaign kill"),
+                        "engine": self.engine.engine_name(),
+                    }
+                    try:
+                        sweep_status = execute_response(
+                            config.ACTION_TERMINATE_QUARANTINE, event,
+                            self.bc, self.db, decision,
+                            backup=self.backup)
+                        if "RESTORED" in str(sweep_status):
+                            repaired += 1
+                            # Re-prime the entropy history with the
+                            # restored (clean) content so future deltas
+                            # are meaningful again.
+                            try:
+                                clean = (self.pipeline.entropy_analyzer
+                                         .analyze(path))
+                                self.backup.capture(
+                                    path,
+                                    event={"event_type": "RESTORED",
+                                           "entropy_overall":
+                                               clean.get("entropy_overall")},
+                                    strict=True)
+                            except Exception:
+                                pass
+                        self.stats["quarantined"] += 1
+                        log.warning(f"  [SWEEP] {name} → {sweep_status}")
+                    except Exception as e:
+                        log.error(f"  [SWEEP] Failed for {path}: {e}")
+        log.warning(
+            f"  [SWEEP] Post-kill verification complete: "
+            f"{repaired} file(s) repaired")
 
     def stop(self):
         self.pipeline.stop()

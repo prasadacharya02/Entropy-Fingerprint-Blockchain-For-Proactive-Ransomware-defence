@@ -71,7 +71,16 @@ DATA_DIR          = str(BASE_PATH / "data")
 TRAINING_DATA_DIR = str(BASE_PATH / "data" / "training")
 TESTING_DATA_DIR  = str(BASE_PATH / "data" / "testing")
 VICTIM_USER_FILES = str(BASE_PATH / "victim_server" / "user_files")
-QUARANTINE_DIR    = str(BASE_PATH / "quarantine_storage")
+
+# ── Install-time quarantine folder ───────────────────────────
+# The quarantine store is created by the operator when the shield
+# is installed: point ENTROPY_QUARANTINE_DIR at the folder you want
+# protected files moved to (absolute or relative to the repo root).
+# It is created automatically if it does not exist.
+_quarantine_raw = os.getenv("ENTROPY_QUARANTINE_DIR", "").strip()
+QUARANTINE_DIR    = (str(_resolve_path(_quarantine_raw))
+                     if _quarantine_raw
+                     else str(BASE_PATH / "quarantine_storage"))
 BACKUP_DIR        = str(BASE_PATH / "backup_storage")
 REPORTS_DIR       = str(BASE_PATH / "reports")
 
@@ -108,6 +117,24 @@ WHITELISTED_PROCESSES = [
     "code.exe", "explorer.exe"
 ]
 
+# ── Self-kill safety gate ────────────────────────────────────
+# Command-line fragments that identify THIS software (defender
+# pipeline, dashboards, lab services). The response layer refuses to
+# terminate any process whose command line matches one of these, no
+# matter what file-event attribution says. Real deployments should
+# add their own product's module names here.
+DEFENDER_TOOLING_MARKERS = (
+    "pipeline_runner",
+    "entropy_system",
+    "lab.py",
+    "victim_server",
+    "attacker_server/app",
+    "attacker_server\\app",
+    "dashboard",
+    "app.py",
+    "main.py",
+)
+
 # ── Event Pipeline & Monitoring Config ───────────────────────
 EVENT_DEDUP_WINDOW_SECONDS = _env_float("EVENT_DEDUP_WINDOW_SECONDS", 1.0, minimum=0.0)
 EVENT_QUEUE_SIZE           = _env_int("EVENT_QUEUE_SIZE", 10000, minimum=1)
@@ -117,6 +144,24 @@ EVENT_BATCH_SIZE           = _env_int("EVENT_BATCH_SIZE", 50, minimum=1)
 ENTROPY_THRESHOLD          = _env_float("ENTROPY_THRESHOLD", 6.8, minimum=0.0)
 ENTROPY_DELTA_THRESHOLD    = _env_float("ENTROPY_DELTA_THRESHOLD", 2.0, minimum=0.0)
 FILES_PER_SECOND_THRESHOLD = _env_float("ENTROPY_FILES_PER_SECOND_THRESHOLD", 3.0, minimum=0.0)
+
+# ── Campaign (multi-file) escalation ───────────────────────
+# A single high-entropy file is NOT proof of an attack — video
+# writes, zip archives and photo imports are legitimately
+# high-entropy. Ransomware, however, is by definition multi-file:
+# one threat touches many files within seconds. The decision layer
+# therefore tracks recent suspicious files (encrypted-data
+# signature: entropy >= ENTROPY_THRESHOLD plus behavioural
+# corroboration — an entropy jump >= ENTROPY_DELTA_THRESHOLD or a
+# rename to a disguise extension) and confirms a CAMPAIGN when
+# CAMPAIGN_MIN_FILES distinct files qualify within
+# CAMPAIGN_WINDOW_SECONDS. On confirmation the response escalates
+# to terminate + quarantine for the newest file, and a sweep
+# quarantines + restores the remaining campaign files. This is what
+# stops a slow, realistic attack within the first few files.
+CAMPAIGN_ENABLED        = _env_bool("ENTROPY_CAMPAIGN_ENABLED", True)
+CAMPAIGN_WINDOW_SECONDS = _env_float("ENTROPY_CAMPAIGN_WINDOW_SECONDS", 15.0, minimum=1.0)
+CAMPAIGN_MIN_FILES      = _env_int("ENTROPY_CAMPAIGN_MIN_FILES", 2, minimum=2)
 SAMPLE_SIZE_BYTES          = _env_int("ENTROPY_SAMPLE_SIZE_BYTES", 65536, minimum=1)
 
 # ── Decision Engine Selection ────────────────────────────────
@@ -137,7 +182,7 @@ GANACHE_URL         = os.getenv("ENTROPY_GANACHE_URL", "http://127.0.0.1:7545")
 CONTRACT_ADDRESS    = os.getenv("ENTROPY_CONTRACT_ADDRESS", "0x7d5fd3ad0ffbeaAf9df76d1CF74058b5E14ddC1D").strip()
 WALLET_ADDRESS      = os.getenv("ENTROPY_WALLET_ADDRESS", "0x4769fFb50b3bE30331056C2f174A0eaa64436E5d").strip()
 ACCOUNT_INDEX         = _env_int("ENTROPY_ACCOUNT_INDEX", 0, minimum=0)
-BLOCKCHAIN_FALLBACK = _env_bool("ENTROPY_BLOCKCHAIN_FALLBACK", False)
+BLOCKCHAIN_FALLBACK = _env_bool("ENTROPY_BLOCKCHAIN_FALLBACK", True)
 
 # ── Federated Threat-Fingerprint Exchange ─────────────────────
 # Shared registry of confirmed threat fingerprints — the "have we seen
@@ -160,8 +205,11 @@ FLASK_HOST          = DASHBOARD_HOST
 FLASK_PORT          = DASHBOARD_PORT
 PUBLIC_DASHBOARD_URL= f"http://{DASHBOARD_HOST}:{DASHBOARD_PORT}"
 
-VICTIM_HOST         = "127.0.0.1"
-VICTIM_PORT         = 5001
+# The victim explorer is a normal web app; bind it wherever the operator
+# wants to reach it. Default is loopback (safe); the lab launcher sets
+# 0.0.0.0 so a remote browser can open "This PC".
+VICTIM_HOST         = os.getenv("ENTROPY_VICTIM_HOST", "127.0.0.1")
+VICTIM_PORT         = _env_int("ENTROPY_VICTIM_PORT", 5001)
 PUBLIC_VICTIM_URL   = f"http://{VICTIM_HOST}:{VICTIM_PORT}"
 
 ATTACKER_HOST       = "0.0.0.0"
@@ -171,7 +219,12 @@ PUBLIC_ATTACKER_URL = f"http://127.0.0.1:{ATTACKER_PORT}"
 DEBUG_MODE          = False
 SECRET_KEY          = os.getenv("ENTROPY_SECRET_KEY", "entropy-local-development-only")
 DRY_RUN             = _env_bool("ENTROPY_DRY_RUN", False)
-CONTROL_TOKEN       = os.getenv("CONTROL_TOKEN", "demo_secret_token_123")
+# The lab UI (attacker console) authenticates control routes with this
+# bearer token. lab.py sets ENTROPY_CONTROL_TOKEN; CONTROL_TOKEN is kept
+# as a legacy alias. Leave both unset to fall back to loopback-only.
+CONTROL_TOKEN       = (os.getenv("ENTROPY_CONTROL_TOKEN")
+                       or os.getenv("CONTROL_TOKEN")
+                       or "").strip()
 
 # ── Privileged Vault Access (Victim UI) ──────────────────────
 VAULT_USER          = os.getenv("ENTROPY_VAULT_USER", "victim_user")

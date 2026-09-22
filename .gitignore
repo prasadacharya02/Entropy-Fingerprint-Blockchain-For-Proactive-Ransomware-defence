@@ -30,6 +30,7 @@ Thumbs.db
 *.db
 *.db-shm
 *.db-wal
+attacker_control.json
 logs/
 quarantine_storage/
 backup_storage/

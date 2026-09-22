@@ -335,12 +335,62 @@ def handle_connect():
     emit("status", {"message": "Connected to Entropy Dashboard"})
 
 
+def _last_event_id() -> int:
+    """Highest row id already pushed to websocket clients (per process)."""
+    try:
+        db = get_db()
+        row = db.execute("SELECT COALESCE(MAX(id), 0) AS last_id FROM events").fetchone()
+        db.close()
+        return int(row["last_id"] or 0)
+    except Exception:
+        return 0
+
+
 def push_updates():
+    """Real-time push loop.
+
+    Two channels, both driven by the shared events database (the
+    pipeline process writes, the dashboard process reads):
+
+    * ``new_event``   — every filesystem/detection event as soon as it
+                        is persisted (sub-second), full row payload so
+                        the SOC timeline, entropy graph, and alert
+                        panel update live without polling.
+    * ``live_update`` — counter heartbeat (totals / threats).
+    """
+    last_id = _last_event_id()
     while True:
         try:
             with app.app_context():
-                db  = get_db()
-                row = db.execute("""
+                # ── 1) Push any events the pipeline persisted since
+                #       the last pass (this is the real-time channel).
+                db = get_db()
+                new_rows = db.execute(
+                    "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 100",
+                    (last_id,),
+                ).fetchall()
+                if new_rows:
+                    for row in new_rows:
+                        try:
+                            socketio.emit("new_event", dict(row))
+                        except Exception:
+                            log.exception("new_event emit failed")
+                        last_id = int(row["id"])
+                else:
+                    # DB was reset/rotated under us — resync the cursor
+                    # so future events are still pushed.
+                    cur_max = int(
+                        db.execute(
+                            "SELECT COALESCE(MAX(id), 0) AS m FROM events"
+                        ).fetchone()["m"] or 0
+                    )
+                    if cur_max < last_id:
+                        last_id = cur_max
+                db.close()
+
+                # ── 2) Counter heartbeat.
+                db = get_db()
+                stat = db.execute("""
                     SELECT COUNT(*) AS total,
                            SUM(CASE WHEN action >= 1
                                THEN 1 ELSE 0 END) AS threats
@@ -349,13 +399,13 @@ def push_updates():
                 db.close()
 
                 socketio.emit("live_update", {
-                    "total"   : row["total"]   or 0,
-                    "threats" : row["threats"] or 0,
+                    "total"   : stat["total"]   or 0,
+                    "threats" : stat["threats"] or 0,
                     "time"    : datetime.now().strftime("%H:%M:%S")
                 })
         except Exception:
             log.exception("Live update push failed")
-        time.sleep(1)
+        time.sleep(0.4)
 
 
 # ═══════════════════════════════════════════════════

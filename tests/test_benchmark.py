@@ -41,18 +41,52 @@ class BenchmarkHarnessTests(unittest.TestCase):
             self.assertTrue(run["detected"], f"baseline={baseline}")
             self.assertGreaterEqual(run["max_action"], 1)
 
-    def test_baseline_upgrades_alerts_to_quarantine(self):
-        """The startup baseline adds the entropy-delta signal: the same
-        polymorphic attack should reach QUARANTINE with a baseline and
-        only ALERT without one."""
+    def test_polymorphic_quarantined_in_both_modes(self):
+        """The campaign escalator confirms a multi-file disguise
+        rename attack even WITHOUT a startup baseline (no entropy-delta
+        signal available): quarantine must happen in both modes."""
         without = runner.simulate_scenario(
             attack_polymorphic(1), baseline=False, root=_root(),
         )
         with_baseline = runner.simulate_scenario(
             attack_polymorphic(1), baseline=True, root=_root(),
         )
-        self.assertEqual(without["max_action"], 1)   # ALERT
-        self.assertEqual(with_baseline["max_action"], 3)  # QUARANTINE
+        self.assertEqual(without["max_action"], 3)
+        self.assertEqual(with_baseline["max_action"], 3)
+
+    def test_single_file_disguise_rename_stays_alert(self):
+        """Per-file conservatism is preserved: a SINGLE file renamed to
+        a disguise extension with high entropy is suspicious (ALERT)
+        but is not, on its own, a confirmed campaign (no quarantine)."""
+        from benchmark.scenarios import Op, Scenario, random_bytes
+        import random
+        rng = random.Random(7)
+        # A high-entropy baseline file (delta ~0 after "encryption")
+        # renamed to a disguise extension: the per-file score is
+        # ALERT-level (range + extension, 60), below the quarantine
+        # bar — with only ONE file, the campaign must not fire.
+        scenario = Scenario(
+            "single_disguise", "attack",
+            "One high-entropy file renamed to a disguise extension",
+            [("Data/blob.dat", random_bytes(rng, 65536))],
+            [Op("rename", "Data/blob.dat", random_bytes(rng, 65536),
+                new_path="Data/blob.dat.wnaCry", delay_before=1.0)],
+        )
+        run = runner.simulate_scenario(scenario, baseline=True, root=_root())
+        self.assertTrue(run["detected"])
+        self.assertEqual(run["max_action"], 1)  # ALERT, not QUARANTINE
+
+    def test_campaign_never_fires_on_high_entropy_media(self):
+        """Legitimate high-entropy multi-file work (photo import: no
+        renames, no entropy jumps) must never confirm a campaign —
+        the 0-false-quarantine bar includes the campaign layer."""
+        from benchmark.scenarios import workload_photo_import
+        run = runner.simulate_scenario(
+            workload_photo_import(1), baseline=False, root=_root(),
+        )
+        self.assertEqual(run["max_action"], 0,
+                         f"{run['scenario']} must not alert: "
+                         f"{run['ops_record']}")
 
     def test_clean_workloads_produce_no_quarantine(self):
         for builder in (workload_document_editing, workload_archive_creation):

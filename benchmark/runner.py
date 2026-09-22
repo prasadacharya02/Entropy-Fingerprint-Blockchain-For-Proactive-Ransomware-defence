@@ -29,7 +29,7 @@ import config
 from blockchain.fingerprint_exchange import FingerprintExchange
 from entropy.entropy_calculator import EntropyAnalyzer
 from monitoring.defense_guard import collect_threat_flags
-from monitoring.pipeline_runner import make_decision
+from monitoring.pipeline_runner import DecisionEngine  # noqa: F401
 from benchmark.scenarios import ATTACKS, WORKLOADS
 
 ACTION_NAMES = {0: "IGNORE", 1: "ALERT", 2: "TERMINATE", 3: "QUARANTINE"}
@@ -64,8 +64,18 @@ def simulate_scenario(scenario, *, baseline: bool, root: Path,
     """Run one scenario through the real detection chain.
 
     *engine* is an optional DecisionEngine: when given, decisions come
-    from that engine (the exact path the live pipeline uses) instead
-    of the bare rule function."""
+    from that engine (the exact path the live pipeline uses). When
+    omitted, the rules path still goes through a DecisionEngine
+    (rule engine + cross-file campaign escalation) — never the bare
+    per-file function — so the battery measures the product's actual
+    decision chain."""
+    if engine is None:
+        engine = DecisionEngine(engine="rules")
+    else:
+        # A shared engine (the RF comparison battery) must get a fresh
+        # campaign window per scenario so scenarios cannot
+        # cross-contaminate each other.
+        engine.reset()
     # Reset the victim root and lay down the initial estate.
     if root.exists():
         shutil.rmtree(root)
@@ -156,10 +166,11 @@ def simulate_scenario(scenario, *, baseline: bool, root: Path,
             ))
         except Exception:
             pass
-        if engine is not None:
-            action = int(engine.decide(event)["action"])
-        else:
-            action = make_decision(event)
+        # The campaign layer may escalate this event to quarantine AND
+        # return the earlier campaign files it sweeps. In the live
+        # pipeline the sweep runs as real responses; at the run level
+        # the escalated action below is what the report measures.
+        action = int(engine.decide(event)["action"])
 
         peak_score = max(peak_score, float(result.get("threat_score") or 0.0))
         if action >= config.ACTION_ALERT and first_detection_op is None:
@@ -537,9 +548,13 @@ def write_markdown(summary: dict, out_path: Path) -> Path:
         "(`random.Random`); rerunning produces identical results.")
     add("- The real detection chain is exercised: "
         "`entropy.entropy_calculator.EntropyAnalyzer` + "
-        "`monitoring.pipeline_runner.make_decision` (the exact decision "
-        "function the live pipeline uses), with the monitor's 10-second "
-        "event-rate window simulated deterministically.")
+        "`monitoring.pipeline_runner.DecisionEngine` (the exact decision "
+        "layer the live pipeline uses) — per-file scoring plus the "
+        "cross-file campaign escalator, which confirms a ransomware "
+        "campaign when ≥2 distinct files show encrypted-data signatures "
+        "within 15s — with the monitor's 10-second event-rate window "
+        "simulated deterministically. Each scenario gets a fresh "
+        "decision engine so scenarios cannot cross-contaminate.")
     add("- `baseline` = the production startup snapshot of the protected "
         "estate; `no baseline` = the estate existed before monitoring with "
         "no snapshot (the worst case).")

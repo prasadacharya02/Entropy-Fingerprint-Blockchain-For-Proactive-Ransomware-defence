@@ -90,17 +90,37 @@ class ProcessFinder:
         except OSError:
             return None
 
-        for proc in psutil.process_iter(['pid', 'name', 'create_time']):
+        for proc in psutil.process_iter(
+            ['pid', 'name', 'create_time']
+        ):
             try:
                 for opened in proc.open_files():
                     try:
                         if os.path.realpath(opened.path) == target:
-                            return {
+                            info = {
                                 'pid': proc.info['pid'],
                                 'name': proc.info.get('name') or proc.name(),
                                 'create_time': proc.info.get('create_time'),
                                 'identity_verified': True,
                             }
+                            # The command line is carried for the
+                            # response layer's safety gate: the
+                            # defender must be able to tell the
+                            # attacker's process apart from its own
+                            # software (never kill itself).
+                            try:
+                                cmdline = proc.cmdline()
+                                if cmdline:
+                                    info['cmdline'] = " ".join(
+                                        cmdline
+                                    )[:300]
+                            except (
+                                psutil.NoSuchProcess,
+                                psutil.AccessDenied,
+                                OSError,
+                            ):
+                                pass
+                            return info
                     except (OSError, ValueError):
                         continue
             except (psutil.NoSuchProcess, psutil.AccessDenied):

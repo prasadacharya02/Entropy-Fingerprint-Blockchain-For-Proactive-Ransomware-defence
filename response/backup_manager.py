@@ -56,21 +56,44 @@ def _file_entropy_sample(file_path: str, sample_size: int | None = None):
     return -sum((c / total) * math.log2(c / total) for c in counts.values())
 
 
-def _is_clean(file_path: str, entropy) -> bool:
+def _is_clean(file_path: str, entropy, strict: bool = False,
+              last_clean_entropy: float | None = None) -> bool:
     """Label a version clean using the same ranges as the detector.
 
     Known file types are compared against their per-extension normal
     range (with the detector's 0.5 measurement-noise margin); unknown
     types fall back to the global entropy threshold.
+
+    ``strict`` (event-time captures): the content must look NATIVE to
+    the file type — inside its normal range with no noise margin —
+    and, when the last clean version's entropy is known, must not be a
+    dramatic change from it (>= ENTROPY_DELTA_THRESHOLD apart).
+    Ransomware ciphertext for office formats (7.8-8.0) fails the
+    range test (xlsx/docx/jpg) and the delta test (pdf/txt); in-range
+    media ciphertext (the documented blind spot) can still pass — no
+    entropy rule can separate it from native content, so such files
+    are the known, accepted residual risk.
     """
     if entropy is None:
         return False
     entropy = float(entropy)
     _, ext = os.path.splitext(file_path)
     normal = config.NORMAL_ENTROPY_RANGES.get(ext.lower())
-    if normal:
-        return entropy <= normal[1] + 0.5
-    return entropy < config.ENTROPY_THRESHOLD
+    if not strict:
+        if normal:
+            return entropy <= normal[1] + 0.5
+        return entropy < config.ENTROPY_THRESHOLD
+    if normal is None:
+        # Unknown type at event time: the content cannot be vouched
+        # for — forensics only, never a restore source.
+        return False
+    if entropy > normal[1]:
+        return False
+    if (last_clean_entropy is not None
+            and abs(entropy - last_clean_entropy)
+            >= config.ENTROPY_DELTA_THRESHOLD):
+        return False
+    return True
 
 
 class BackupManager:
@@ -152,11 +175,16 @@ class BackupManager:
 
     # ── Capture ──────────────────────────────────────────────
 
-    def capture(self, file_path: str, event: dict | None = None) -> dict:
+    def capture(self, file_path: str, event: dict | None = None,
+                *, strict: bool = False) -> dict:
         """Store the current content of *file_path* as a new version.
 
         Capture is additive: it reads the victim file and writes only
         into the backup store, so it is safe in every mode.
+
+        ``strict`` marks the version with the no-margin clean rule —
+        use it for event-time captures, where the triggering event is
+        itself suspicious and the current content is the "after" state.
         """
         event = event or {}
         result = {
@@ -175,9 +203,20 @@ class BackupManager:
             return result
 
         entropy = event.get("entropy_overall")
-        clean = _is_clean(file_path, entropy)
 
         with self.lock:
+            # Clean label is computed atomically against the current
+            # manifest: strict (event-time) captures compare against
+            # the last clean version's entropy.
+            manifest = self._load_manifest()
+            existing = manifest.get(file_path) or []
+            last_clean_entropy = None
+            for v in reversed(existing):
+                if v.get("clean") and v.get("entropy") is not None:
+                    last_clean_entropy = float(v["entropy"])
+                    break
+            clean = _is_clean(file_path, entropy, strict=strict,
+                              last_clean_entropy=last_clean_entropy)
             try:
                 digest = self._store_blob(file_path)
             except Exception as exc:
@@ -188,7 +227,6 @@ class BackupManager:
                 result["message"] = "Capture failed: could not fingerprint file"
                 return result
 
-            manifest = self._load_manifest()
             versions = manifest.setdefault(file_path, [])
             version = max((v.get("version", 0) for v in versions), default=0) + 1
 

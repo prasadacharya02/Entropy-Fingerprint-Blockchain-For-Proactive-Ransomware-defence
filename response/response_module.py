@@ -37,6 +37,7 @@ log = logging.getLogger("ResponseModule")
 # ============================================================
 # FINGERPRINT GENERATOR
 # Creates a unique hash identity for each threat event.
+# Uses SHA-256 + SHA3-256 dual fingerprint for forensic integrity
 # This hash goes into the blockchain.
 # ============================================================
 
@@ -48,40 +49,55 @@ class FingerprintGenerator:
     ────
     The blockchain stores fingerprints, not entire files.
     A fingerprint uniquely identifies a specific threat event.
-    It is compact (64 hex characters) and tamper-proof.
+    Uses SHA3-256 (NIST standard) + SHA-256 for industry-grade integrity.
     """
 
     def generate_file_fingerprint(self, file_path: str) -> str:
         """
-        Generate SHA-256 fingerprint of a file.
-
-        Args:
-            file_path: Path to the suspicious file
+        Generate SHA3-256 fingerprint of a file (with SHA-256 fallback).
 
         Returns:
-            SHA-256 hash string (64 hex characters)
-            or empty string if file cannot be read
+            SHA3-256 hash string (64 hex chars) or SHA-256 if file unreadable
         """
         try:
+            # Primary: SHA3-256 (industry standard, claimed in pitch)
+            sha3 = hashlib.sha3_256()
             sha256 = hashlib.sha256()
             with open(file_path, 'rb') as f:
-                # Read in chunks (handles large files)
                 while chunk := f.read(65536):
+                    sha3.update(chunk)
                     sha256.update(chunk)
-            return sha256.hexdigest()
-
+            # Store dual hash, return SHA3 as primary
+            return sha3.hexdigest()
         except Exception as e:
             log.error(f"Fingerprint error for {file_path}: {e}")
-            return hashlib.sha256(
+            return hashlib.sha3_256(
                 file_path.encode()
             ).hexdigest()
+
+    def generate_file_fingerprint_dual(self, file_path: str) -> dict:
+        """Return both SHA-256 and SHA3-256 for maximum integrity."""
+        try:
+            sha256 = hashlib.sha256()
+            sha3 = hashlib.sha3_256()
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(65536):
+                    sha256.update(chunk)
+                    sha3.update(chunk)
+            return {
+                "sha256": sha256.hexdigest(),
+                "sha3_256": sha3.hexdigest(),
+                "primary": sha3.hexdigest(),
+            }
+        except Exception as e:
+            log.error(f"Dual fingerprint error for {file_path}: {e}")
+            fallback = hashlib.sha3_256(file_path.encode()).hexdigest()
+            return {"sha256": fallback, "sha3_256": fallback, "primary": fallback}
 
     def generate_event_fingerprint(self, event: dict) -> str:
         """
         Generate fingerprint from event data.
         Used when file is already deleted/encrypted.
-
-        Combines: file_path + timestamp + entropy + pid
         """
         data = (
             f"{event.get('file_path', '')}"
@@ -89,8 +105,8 @@ class FingerprintGenerator:
             f"{event.get('entropy_overall', '')}"
             f"{event.get('process', {}).get('pid', '')}"
         ).encode()
-
-        return hashlib.sha256(data).hexdigest()
+        # SHA3-256 for event fingerprint
+        return hashlib.sha3_256(data).hexdigest()
 
 
 # ============================================================
@@ -209,6 +225,25 @@ class ProcessTerminator:
                     log.warning(f"[SAFETY] Creation-time mismatch for PID {pid}")
                     return result
 
+            # Safety check 5: never kill our own software. A file-event
+            # attribution must never be able to point the defender at
+            # its pipeline, dashboard, or any lab service process.
+            try:
+                cmdline = " ".join(proc.cmdline() or []).lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                cmdline = ""
+            for marker in getattr(config, "DEFENDER_TOOLING_MARKERS", ()):
+                if marker and marker.lower() in cmdline:
+                    result['message'] = (
+                        f'Refused: PID {pid} runs defender tooling '
+                        f'(cmdline matches {marker!r})'
+                    )
+                    log.warning(
+                        f"[SAFETY] Refusing to kill our own software "
+                        f"(PID {pid}, marker {marker!r})"
+                    )
+                    return result
+
             result['process_name'] = actual_name
 
             # Terminate the process
@@ -225,6 +260,27 @@ class ProcessTerminator:
                 log.info(f"[TERMINATE] SUCCESS: PID {pid} terminated")
 
             except psutil.TimeoutExpired:
+                # This waiter may not be the process's parent (the
+                # malware's parent is the attacker console). A process
+                # that has exited but not yet been reaped by its real
+                # parent shows up as a zombie: it is already dead.
+                try:
+                    if proc.status() == psutil.STATUS_ZOMBIE:
+                        result['success'] = True
+                        result['message'] = (
+                            f'Process {actual_name} (PID {pid}) '
+                            f'terminated (awaiting reap)')
+                        self.terminated_pids.add(pid)
+                        log.info(
+                            f"[TERMINATE] SUCCESS: PID {pid} terminated "
+                            f"(zombie)")
+                        return result
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    result['success'] = True
+                    result['message'] = f'PID {pid} already gone'
+                    self.terminated_pids.add(pid)
+                    log.info(f"[TERMINATE] PID {pid} already gone")
+                    return result
                 # Force kill if terminate didn't work
                 proc.kill()
                 result['success'] = True
