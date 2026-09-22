@@ -16,6 +16,7 @@ import time
 import json
 import hashlib
 import logging
+from collections import deque
 from datetime import datetime
 from threading import Thread
 
@@ -24,9 +25,11 @@ import config
 
 from monitoring.event_pipeline   import EventPipeline
 from blockchain.connector        import BlockchainConnector
-from response.response_module     import ProcessTerminator
+from response.response_module     import FileQuarantine, ProcessTerminator
+from response.backup_manager     import BackupManager
+from storage.hashing             import sha256_file
+from response.forensic_report    import generate_report
 from storage.database             import init_db as initialize_database
-from storage.hashing               import sha256_file
 
 # Logger must exist before the optional DQN import: the fallback path logs
 # missing PyTorch/model errors during module import.
@@ -43,6 +46,19 @@ except Exception as _dqn_err:
     DQNAgent = None
     _DQN_AVAILABLE = False
     log.warning(f"[RUNNER] DQN unavailable ({_dqn_err}) — "
+                f"using rule-based fallback")
+
+# ── Optional Random Forest second classifier ────────────
+# A calibrated, explainable risk score (scikit-learn + SHAP).
+# Optional exactly like the DQN: no scikit-learn / no trained
+# weights → the rule engine decides.
+try:
+    from ai.rf_model import RFEngine
+    _RF_AVAILABLE = True
+except Exception as _rf_err:
+    RFEngine = None
+    _RF_AVAILABLE = False
+    log.warning(f"[RUNNER] Random Forest unavailable ({_rf_err}) — "
                 f"using rule-based fallback")
 
 # ── Logging ───────────────────────────────────────────────
@@ -78,7 +94,18 @@ def init_db():
     return initialize_database()
 
 
-def save_to_db(conn, event, action, status, outcome=None, decision=None):
+# ============================================================
+# FEDERATED THREAT-FINGERPRINT EXCHANGE
+# ============================================================
+
+# The node's shared view of the exchange. The canonical lazy singleton
+# lives in blockchain.fingerprint_exchange so the flag collection in
+# defense_guard and the response sharing here use the same store.
+from blockchain.fingerprint_exchange import get_exchange  # noqa: F401
+
+
+def save_to_db(conn, event, action, status, outcome=None, decision=None,
+               restore_result=None):
     """Save a processed event to the SQLite database."""
     try:
         proc     = event.get("process") or {}
@@ -91,9 +118,9 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None):
             INSERT INTO events
             (timestamp, file_path, event_type, entropy,
              entropy_delta, pid, process_name, action, status,
-             requested_action, outcome, dry_run,
+             requested_action, outcome, restore_result, dry_run,
              engine, confidence, explanation, q_values)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             event.get("timestamp", datetime.now().isoformat()),
             event.get("file_path", ""),
@@ -106,6 +133,7 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None):
             status,
             action,
             outcome,
+            restore_result,
             1 if config.DRY_RUN else 0,
             decision.get("engine") or "rules",
             float(decision.get("confidence") or 0.0),
@@ -124,12 +152,29 @@ def save_to_db(conn, event, action, status, outcome=None, decision=None):
 
 def make_decision(event: dict) -> int:
 
+    # ── Hard-confirmation signals ────────────────────────────
+    # A dropped ransom note, an attacker destroying the recovery
+    # capability (backup store / Shadow Copies / services), or a
+    # fingerprint that >= EXCHANGE_CONFIRM_THRESHOLD *independent*
+    # nodes have already contained as a confirmed threat, is a
+    # confirmed incident on its own — no local signal required.
+    if (event.get("ransom_note") or event.get("defense_tamper")
+            or event.get("known_threat_confirmed")):
+        return config.ACTION_TERMINATE_QUARANTINE
+
     entropy   = event.get("entropy_overall") or 0.0
     delta     = abs(event.get("entropy_delta") or 0.0)
     fps       = event.get("events_per_sec")   or 0.0
     score     = event.get("threat_score")     or 0.0
     ext_chg   = event.get("ext_changed",      False)
     hi_speed  = event.get("is_suspicious_speed", False)
+
+    # A fingerprint seen by a SINGLE node is corroboration, not
+    # confirmation: it weighs the score but can never quarantine
+    # alone (a poisoned or buggy node must not be able to seed the
+    # exchange into destroying clean files everywhere).
+    if event.get("known_threat"):
+        score = min(100.0, score + 25.0)
 
     # High entropy is not sufficient evidence: images, archives, videos and
     # encrypted user files are expected to be high entropy. Require a second
@@ -168,7 +213,9 @@ def make_decision(event: dict) -> int:
 def execute_response(action: int,
                      event: dict,
                      bc: BlockchainConnector,
-                     db_conn, decision: dict | None = None) -> str:
+                     db_conn, decision: dict | None = None,
+                     backup: "BackupManager | None" = None,
+                     exchange=None) -> str:
 
     file_path = event.get("file_path", "")
     proc      = event.get("process") or {}
@@ -186,7 +233,11 @@ def execute_response(action: int,
     fname     = os.path.basename(file_path)
     outcome   = status
 
-    # ── IGNORE ────────────────────────────────────
+    terminate_result  = None
+    quarantine_result = None
+    restore_result    = None
+
+    # ── IGNORE ───────────────────────────────────
     if action == config.ACTION_IGNORE:
         log.info(f"  [OK]     {fname} | H={entropy:.2f}")
         save_to_db(db_conn, event, action, status, outcome, decision)
@@ -201,6 +252,7 @@ def execute_response(action: int,
     if action == config.ACTION_TERMINATE:
         log.warning(f"  [KILL]   {fname} | H={entropy:.2f}")
         killed = _terminate_process(pid, procname, proc)
+        terminate_result = "TERMINATED" if killed else "TERMINATE_REFUSED"
         outcome = "DRY_RUN_TERMINATE" if config.DRY_RUN else (
             "TERMINATED" if killed else "TERMINATE_REFUSED"
         )
@@ -209,15 +261,89 @@ def execute_response(action: int,
     if action == config.ACTION_TERMINATE_QUARANTINE:
         log.warning(f"  [THREAT] {fname} | H={entropy:.2f}")
         killed = _terminate_process(pid, procname, proc)
-        q_result = _quarantine_file(file_path, event=event, action=action)
-        log.warning(f"  [ACTION] Quarantine result: {q_result}")
-        outcome = q_result if isinstance(q_result, str) else status
+        terminate_result = "TERMINATED" if killed else "TERMINATE_REFUSED"
+        quarantine_result = _quarantine_file(file_path, event=event, action=action)
+        log.warning(f"  [ACTION] Quarantine result: {quarantine_result}")
+        outcome = quarantine_result if isinstance(quarantine_result, str) else status
         if config.DRY_RUN:
             outcome = "DRY_RUN_QUARANTINE"
-        elif not killed and q_result != "QUARANTINED":
+        elif not killed and quarantine_result != "QUARANTINED":
             outcome = "RESPONSE_PARTIAL"
 
-    save_to_db(db_conn, event, action, status, outcome, decision)
+        # ── RECOVERY: restore the last known-good version ──
+        # Dry-run: the lab attack engine is one-shot, so simulating the
+        # restore is safe. Live mode: only restore once the file is
+        # contained (quarantined or already gone) so the attacker cannot
+        # re-encrypt the restored copy in place.
+        if backup is not None:
+            contained = config.DRY_RUN or quarantine_result in (
+                "QUARANTINED", "FILE_ALREADY_MOVED", "DRY_RUN_QUARANTINE"
+            )
+            if not contained:
+                restore_result = "RESTORE_SKIPPED"
+                log.warning("  [RESTORE] Skipped: file not contained "
+                            "(quarantine failed)")
+            else:
+                try:
+                    r = backup.restore(file_path, event=event)
+                    if r.get("success") and r.get("restored"):
+                        restore_result = "RESTORED"
+                    elif r.get("success") and r.get("dry_run"):
+                        restore_result = "DRY_RUN_RESTORE"
+                    else:
+                        restore_result = "RESTORE_FAILED"
+                    log.warning(f"  [RESTORE] {restore_result}: "
+                                f"{r.get('message')}")
+                except Exception as e:
+                    restore_result = "RESTORE_FAILED"
+                    log.error(f"  [RESTORE] {e}")
+
+        # ── RENAME BACK: complete the recovery ──
+        # A rename attack (doc.txt → doc.txt.locked) leaves the restored
+        # content under the disguised name. Move the file — and its
+        # backup version history — back to the original path so
+        # recovery is complete: content AND name.
+        if (restore_result == "RESTORED" and isinstance(event, dict)):
+            original = event.get("original_path")
+            if (original
+                    and os.path.abspath(original) != os.path.abspath(file_path)
+                    and os.path.exists(file_path)
+                    and not os.path.exists(original)):
+                try:
+                    os.replace(file_path, original)
+                    if backup is not None:
+                        backup.transfer(file_path, original)
+                    log.info(
+                        f"  [RESTORE] Rename-back complete: "
+                        f"{os.path.basename(original)}"
+                    )
+                except OSError as e:
+                    log.warning(f"  [RESTORE] Rename-back failed: {e}")
+        if restore_result:
+            outcome = f"{outcome}+{restore_result}"
+
+    # ── FORENSIC REPORT for every incident ────────
+    if action >= config.ACTION_ALERT:
+        try:
+            report_path = generate_report(
+                event, decision or {}, {
+                    "requested_action":     action,
+                    "outcome":              outcome,
+                    "dry_run":              bool(config.DRY_RUN),
+                    "terminate":            terminate_result,
+                    "quarantine":           quarantine_result,
+                    "restore":              restore_result,
+                    "blockchain_reference": file_hash or None,
+                }
+            )
+            if report_path:
+                log.info(f"  [REPORT] Forensic report → "
+                         f"{os.path.basename(report_path)}")
+        except Exception as e:
+            log.error(f"  [REPORT] Generation failed: {e}")
+
+    save_to_db(db_conn, event, action, status, outcome, decision,
+               restore_result)
 
     # ── Blockchain log ────────────────────────────
     if action >= config.ACTION_ALERT:
@@ -239,7 +365,40 @@ def execute_response(action: int,
         except Exception as e:
             log.error(f"  [BLOCKCHAIN] Failed: {e}")
 
-    return status
+    # ── Federated exchange: share the confirmed threat ──────
+    # Only CONFIRMED threats (quarantine) are shared — an alert is a
+    # suspicion, not a shared fact. And only when we hold the file's
+    # real content hash: a path hash or a missing file (e.g. the
+    # already-deleted target of a defense-tamper event) must never be
+    # published as a threat fingerprint.
+    if action == config.ACTION_TERMINATE_QUARANTINE and file_hash:
+        # An injected exchange (benchmark / multi-node simulation) is an
+        # explicit opt-in and always registers. The canonical store is
+        # gated by config.EXCHANGE_ENABLED (tests / single-node offline).
+        if exchange is None and not config.EXCHANGE_ENABLED:
+            store = None
+        else:
+            store = exchange if exchange is not None else get_exchange()
+        if store is not None:
+            try:
+                rec = store.register(
+                    file_hash,
+                    threat_type="ransomware",
+                    file_extension=os.path.splitext(file_path)[1].lower(),
+                    file_size=event.get("file_size") or 0,
+                    evidence=(decision or {}).get("explanation", ""),
+                )
+                log.warning(
+                    f"  [EXCHANGE] fingerprint {file_hash[:12]}… shared "
+                    f"(sightings={rec['sightings']}, "
+                    f"sources={len(rec['sources'])})"
+                )
+            except Exception as e:
+                log.error(f"  [EXCHANGE] Registration failed: {e}")
+
+    # Return the detailed outcome (e.g. "DRY_RUN_QUARANTINE+DRY_RUN_RESTORE"),
+    # not just the action label — callers and the dashboard rely on it.
+    return outcome
 
 
 def _terminate_process(pid, procname: str, process_info: dict | None = None):
@@ -280,62 +439,38 @@ def _terminate_process(pid, procname: str, process_info: dict | None = None):
 
 
 def _quarantine_file(file_path: str, event: dict | None = None,
-                     action: int | None = None):
-    """Move a suspicious file and persist a complete sidecar record."""
-    import shutil
-    import stat
+                     action: int | None = None) -> str:
+    """Quarantine a suspicious file via the shared response layer.
 
-    if not os.path.isfile(file_path):
-        log.warning(f"  [QUARANTINE] Already moved: {os.path.basename(file_path)}")
-        return "FILE_ALREADY_MOVED"
-
+    Uses FileQuarantine (response/response_module.py) so the pipeline and
+    the response tests share one dry-run-aware implementation. In dry-run
+    mode the file is NEVER moved; the DRY_RUN outcome is recorded by the
+    caller. Returns a string status: QUARANTINED, DRY_RUN_QUARANTINE,
+    FILE_ALREADY_MOVED, PERMISSION_DENIED, or FAILED.
+    """
     try:
-        os.makedirs(config.QUARANTINE_DIR, exist_ok=True)
-        file_stat = os.stat(file_path)
-        sha256 = sha256_file(file_path)
-        original_path = os.path.abspath(file_path)
-        original_name = os.path.basename(file_path)
-        q_name = f"{sha256[:16]}_{original_name}"
-        q_path = os.path.join(config.QUARANTINE_DIR, q_name)
-
-        if os.path.exists(q_path):
-            q_name = f"{sha256[:16]}_{int(time.time_ns())}_{original_name}"
-            q_path = os.path.join(config.QUARANTINE_DIR, q_name)
-
-        shutil.move(file_path, q_path)
-        os.chmod(q_path, stat.S_IRUSR)
-
-        metadata = {
-            "schema_version": 1,
-            "quarantined_at": datetime.now().isoformat(),
-            "original_path": original_path,
-            "original_name": original_name,
-            "quarantine_path": os.path.abspath(q_path),
-            "fingerprint": sha256,
-            "size_bytes": file_stat.st_size,
-            "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
-            "mode": stat.S_IMODE(file_stat.st_mode),
-            "action": action,
-            "event": event or {},
-        }
-        metadata_path = q_path + ".meta.json"
-        temporary_path = metadata_path + ".tmp"
-        with open(temporary_path, "w", encoding="utf-8") as handle:
-            json.dump(metadata, handle, indent=2, sort_keys=True, default=str)
-            handle.write("\n")
-        os.replace(temporary_path, metadata_path)
-        os.chmod(metadata_path, stat.S_IRUSR)
-
-        log.warning(f"  [QUARANTINE] ✅ → {q_name}")
-        return "QUARANTINED"
-
-    except PermissionError:
-        log.error("  [QUARANTINE] ❌ Permission denied")
-        return "PERMISSION_DENIED"
-
+        result = FileQuarantine().quarantine(file_path, event=event)
     except Exception as e:
         log.error(f"  [QUARANTINE] ❌ {e}")
         return "FAILED"
+
+    if config.DRY_RUN and result.get("success"):
+        log.info("  [DRY-RUN] Quarantine simulated — file left in place")
+        return "DRY_RUN_QUARANTINE"
+
+    if not result.get("success"):
+        message = (result.get("message") or "").lower()
+        if "not found" in message:
+            log.warning(f"  [QUARANTINE] Already moved: {os.path.basename(file_path)}")
+            return "FILE_ALREADY_MOVED"
+        if "permission" in message or "denied" in message:
+            log.error("  [QUARANTINE] ❌ Permission denied")
+            return "PERMISSION_DENIED"
+        log.error(f"  [QUARANTINE] ❌ {result.get('message')}")
+        return "FAILED"
+
+    log.warning(f"  [QUARANTINE] ✅ → {os.path.basename(result.get('quarantine_path') or file_path)}")
+    return "QUARANTINED"
 
 
 # ============================================================
@@ -344,17 +479,161 @@ def _quarantine_file(file_path: str, event: dict | None = None,
 # (fallback). Both produce an action in the same 0-3 space.
 # ============================================================
 
-class DecisionEngine:
-    """
-    Wraps the trained DQN agent and falls back to the
-    rule-based detector when the model cannot be loaded.
+class CampaignTracker:
+    """Cross-file campaign detection for ransomware.
+
+    The per-file score is deliberately conservative: one high-entropy
+    file is not proof (video writes, archive creation and photo
+    imports all produce high-entropy content). Ransomware is, by
+    definition, multi-file: the same threat touches many files in
+    rapid succession. This tracker remembers recent suspicious files
+    and confirms a campaign when ``CAMPAIGN_MIN_FILES`` distinct files
+    all carry an encrypted-data signature inside
+    ``CAMPAIGN_WINDOW_SECONDS``:
+
+      * entropy >= ENTROPY_THRESHOLD (looks like encrypted data), AND
+      * behavioural corroboration: an entropy jump of at least
+        ENTROPY_DELTA_THRESHOLD (the file used to be something else)
+        OR a rename to a new extension (disguise).
+
+    Files that merely produce high entropy without corroboration
+    (a new video, an imported zip, …) never enter the tracker, so
+    legitimate media workloads can never confirm a campaign.
+
+    The tracker also remembers the most recent process verified as
+    holding a suspicious file open (``last_verified``). On escalation
+    that attribution is the kill target — by the time a campaign is
+    confirmed the newest file's handle may already be closed, but the
+    malware process is the same one that wrote the earlier files.
     """
 
     def __init__(self):
-        self.agent = None
-        self.using_dqn = False
+        # (timestamp, path, event, action)
+        self.entries: deque = deque()
+        self.last_verified = None  # (timestamp, process dict)
 
-        if _DQN_AVAILABLE and DQNAgent is not None:
+    def reset(self):
+        self.entries.clear()
+        self.last_verified = None
+
+    @staticmethod
+    def _qualifies(event: dict) -> bool:
+        ent = event.get("entropy_overall") or 0.0
+        if ent < config.ENTROPY_THRESHOLD:
+            return False
+        delta = abs(event.get("entropy_delta") or 0.0)
+        return (delta >= config.ENTROPY_DELTA_THRESHOLD
+                or bool(event.get("ext_changed")))
+
+    @staticmethod
+    def _verified_process(event: dict) -> dict | None:
+        proc = event.get("process")
+        if not isinstance(proc, dict):
+            return None
+        if not (proc.get("identity_verified") and proc.get("pid")):
+            return None
+        # Never let the defender's own software be a kill target.
+        cmdline = str(proc.get("cmdline") or "").lower()
+        if any(marker in cmdline for marker in config.DEFENDER_TOOLING_MARKERS):
+            return None
+        return dict(proc)
+
+    def check_and_record(self, event: dict,
+                         action: int) -> tuple[bool, list, dict | None]:
+        """Record ``event`` and report whether a campaign is confirmed.
+
+        Returns ``(escalate, sweep_events, kill_override)``:
+          escalate      — act as TERMINATE_QUARANTINE for this event
+          sweep_events  — other campaign files to quarantine + restore
+          kill_override — recently verified malware process, used when
+                          this event's own attribution is missing
+        """
+        now = time.time()
+        window = config.CAMPAIGN_WINDOW_SECONDS
+        while self.entries and now - self.entries[0][0] > window:
+            self.entries.popleft()
+        if self.last_verified and now - self.last_verified[0] > window:
+            self.last_verified = None
+
+        verified = self._verified_process(event)
+        if verified is not None:
+            self.last_verified = (now, verified)
+
+        if not self._qualifies(event):
+            return False, [], None
+
+        path = os.path.normpath(event.get("file_path") or "")
+        others = [e for (_t, p, e, a) in self.entries
+                  if p != path and a >= config.ACTION_ALERT]
+        escalate = (action >= config.ACTION_ALERT
+                    and len(others) >= config.CAMPAIGN_MIN_FILES - 1)
+
+        # Keep this event for the window (and for later sweeps).
+        self.entries.append((now, path, event, action))
+        if not escalate:
+            return False, [], None
+
+        # Sweep: the other campaign files that are still on disk.
+        sweep = []
+        seen = set()
+        for (_t, p, e, a) in self.entries:
+            if p == path or p in seen or a < config.ACTION_ALERT:
+                continue
+            target = e.get("file_path") or p
+            if os.path.exists(target):
+                seen.add(p)
+                sweep.append(dict(e))
+
+        kill_override = (None if verified is not None
+                         else (self.last_verified[1]
+                               if self.last_verified else None))
+        return True, sweep, kill_override
+
+
+class DecisionEngine:
+    """
+    Selects the decision engine and wraps it, falling back to the
+    rule-based detector when a requested model cannot be loaded.
+
+    Engine selection (config.AI_ENGINE / ENTROPY_AI_ENGINE):
+      auto / rules (default) — the deterministic rule engine. This is
+            the measured 0-false-quarantine safety bar, so it is the
+            default even when trained models exist.
+      rf — the Random Forest second classifier (calibrated, SHAP-
+           explained risk). Opt-in: measured on the benchmark battery
+           it detects 100% of attacks (including the image blind
+           spot) but false-quarantines high-entropy media workloads.
+      dqn — the trained DQN (opt-in).
+
+    Hard-confirmation signals (ransom note, defense tamper,
+    exchange-confirmed fingerprint) are applied BEFORE any learned
+    engine, so no model can ever talk the pipeline out of a
+    confirmed incident.
+    """
+
+    def __init__(self, engine: str | None = None,
+                 campaign: bool | None = None):
+        # Cross-file campaign escalation (multi-file confirmation)
+        # applies on top of whichever base engine decides. Off by
+        # explicit request (tests that must exercise the bare
+        # per-file behaviour).
+        self.campaign = (config.CAMPAIGN_ENABLED
+                         if campaign is None else bool(campaign))
+        self.campaign_tracker = CampaignTracker()
+        self.requested = (engine or config.AI_ENGINE or "auto").lower()
+        if self.requested not in ("auto", "rules", "dqn", "rf"):
+            log.warning("[DECISION] Unknown ENTROPY_AI_ENGINE %r — "
+                        "using rules", self.requested)
+            self.requested = "auto"
+        self.agent = None
+        self.rf = None
+        self.using_dqn = False
+        self.using_rf = False
+
+        # Learned engines are explicit opt-ins; the default is the
+        # deterministic rule engine.
+        if self.requested == "dqn" and _DQN_AVAILABLE \
+                and DQNAgent is not None:
             try:
                 self.agent = DQNAgent()
                 model_path = os.path.join(
@@ -369,16 +648,110 @@ class DecisionEngine:
                                     "falling back to rules")
                 else:
                     log.warning("[DECISION] No dqn_weights.pth — "
-                                "using rule-based engine")
+                                "falling back to rules")
             except Exception as e:
                 log.warning(f"[DECISION] DQN init error ({e}) — rules")
+
+        if self.requested == "rf" and _RF_AVAILABLE \
+                and RFEngine is not None:
+            rf_model_path = os.path.join(config.AI_DIR, "rf_weights.json")
+            if os.path.exists(rf_model_path):
+                try:
+                    self.rf = RFEngine(rf_model_path)
+                    self.using_rf = True
+                    log.info("[DECISION] Random Forest model loaded ✅")
+                except Exception as e:
+                    log.warning(f"[DECISION] RF load failed ({e}) — "
+                                "falling back to rules")
+            else:
+                log.warning("[DECISION] No rf_weights.json — falling "
+                            "back to rules (train with "
+                            "python -m ai.train_rf)")
+
+    def _active_engine(self) -> str:
+        if self.requested == "dqn":
+            return "dqn" if self.using_dqn else "rules"
+        if self.requested == "rf":
+            return "rf" if self.using_rf else "rules"
+        return "rules"
+
+    def engine_name(self) -> str:
+        return self._active_engine()
+
+    def reset(self):
+        """Clear campaign state (used between isolated test/benchmark
+        scenarios; in live operation the rolling window simply ages
+        out on its own)."""
+        self.campaign_tracker.reset()
 
     def decide(self, event: dict) -> dict:
         """
         Return a decision dict compatible with the response layer:
         { 'action', 'action_name', 'confidence', 'explanation' }
+        plus, when campaign tracking is active, optional keys:
+        { 'sweep_events': [...], 'kill_override': {...}, 'campaign': bool }
         """
-        if self.using_dqn:
+        decision = self._base_decide(event)
+        if not self.campaign:
+            return decision
+
+        action = int(decision.get("action", 0))
+        escalate, sweep, kill_override = (
+            self.campaign_tracker.check_and_record(event, action)
+        )
+        if not escalate:
+            return decision
+
+        if action < config.ACTION_TERMINATE_QUARANTINE:
+            decision["action"] = config.ACTION_TERMINATE_QUARANTINE
+            decision["action_name"] = ACTION_LABELS[
+                config.ACTION_TERMINATE_QUARANTINE]
+        decision["campaign"] = True
+        decision["sweep_events"] = sweep
+        decision["kill_override"] = kill_override
+        prior = decision.get("explanation") or ""
+        decision["explanation"] = (
+            f"CAMPAIGN CONFIRMED: {len(sweep) + 1} files with "
+            f"encrypted-data signatures in "
+            f"{int(config.CAMPAIGN_WINDOW_SECONDS)}s | {prior}"
+        ).strip(" |")
+        return decision
+
+    def _base_decide(self, event: dict) -> dict:
+        """
+        Per-event decision from the selected engine (rules / rf / dqn)
+        plus the hard-confirmation signals — before campaign logic.
+        """
+        # ── Hard-confirmation signals apply to EVERY engine ──
+        # A dropped ransom note, a destroyed recovery capability, or
+        # a fingerprint the exchange has confirmed is a confirmed
+        # incident on its own — no model may override it.
+        if (event.get("ransom_note") or event.get("defense_tamper")
+                or event.get("known_threat_confirmed")):
+            explanation = "Hard-confirmation signal"
+            if event.get("ransom_note"):
+                explanation += " | RANSOM NOTE: " + "; ".join(
+                    event.get("ransom_note_evidence") or []
+                )
+            if event.get("defense_tamper"):
+                explanation += " | DEFENSE TAMPER: " + "; ".join(
+                    event.get("defense_tamper_evidence") or []
+                )
+            if event.get("known_threat_confirmed"):
+                explanation += " | KNOWN THREAT (CONFIRMED BY EXCHANGE): " \
+                    + str(event.get("known_threat_evidence") or "")
+            return {
+                "action"      : config.ACTION_TERMINATE_QUARANTINE,
+                "action_name" : ACTION_LABELS[config.ACTION_TERMINATE_QUARANTINE],
+                "confidence"  : 1.0,
+                "explanation" : explanation,
+                "q_values"    : None,
+                "engine"      : self.engine_name(),
+            }
+
+        active = self._active_engine()
+
+        if active == "dqn":
             try:
                 decision = self.agent.decide(event)
                 return {
@@ -393,12 +766,61 @@ class DecisionEngine:
                 log.warning(f"[DECISION] DQN inference error ({e}) — "
                             f"falling back to rules")
 
+        if active == "rf":
+            try:
+                result = self.rf.score(event)
+                action = int(result["action"])
+                # Exchange corroboration floor: a SINGLE node's
+                # sighting can raise an ignore to an alert but can
+                # never quarantine alone (poison-node defence).
+                if (event.get("known_threat")
+                        and not event.get("known_threat_confirmed")
+                        and action < config.ACTION_ALERT):
+                    action = config.ACTION_ALERT
+                explanation = result["explanation"]
+                if event.get("known_threat"):
+                    explanation += (
+                        " | KNOWN THREAT (CORROBORATED BY EXCHANGE): "
+                        + str(event.get("known_threat_evidence") or "")
+                    )
+                return {
+                    "action"      : action,
+                    "action_name" : ACTION_LABELS.get(action, "UNKNOWN"),
+                    "confidence"  : float(result["probability"]),
+                    "explanation" : explanation,
+                    "q_values"    : None,
+                    "engine"      : "rf",
+                    "risk"        : float(result["risk"]),
+                    "top_features": result.get("top_features"),
+                }
+            except Exception as e:
+                log.warning(f"[DECISION] RF inference error ({e}) — "
+                            f"falling back to rules")
+
         action = make_decision(event)
+        explanation = "Rule-based detector"
+        if event.get("ransom_note"):
+            explanation += " | RANSOM NOTE: " + "; ".join(
+                event.get("ransom_note_evidence") or []
+            )
+        if event.get("defense_tamper"):
+            explanation += " | DEFENSE TAMPER: " + "; ".join(
+                event.get("defense_tamper_evidence") or []
+            )
+        if event.get("known_threat"):
+            marker = "KNOWN THREAT (CONFIRMED BY EXCHANGE): " \
+                if event.get("known_threat_confirmed") else \
+                "KNOWN THREAT (CORROBORATED BY EXCHANGE): "
+            explanation += " | " + marker + (
+                event.get("known_threat_evidence") or ""
+            )
+        elif event.get("reason"):
+            explanation += f" | {event['reason']}"
         return {
             "action"      : action,
             "action_name" : ACTION_LABELS.get(action, "UNKNOWN"),
             "confidence"  : 1.0 if action >= config.ACTION_ALERT else 0.0,
-            "explanation" : "Rule-based detector",
+            "explanation" : explanation,
             "q_values"    : None,
             "engine"      : "rules",
         }
@@ -429,6 +851,9 @@ class PipelineRunner:
         # Blockchain
         self.bc = BlockchainConnector()
 
+        # Backup & recovery store
+        self.backup = BackupManager()
+
         # Stats
         self.stats = {
             "total"      : 0,
@@ -448,11 +873,47 @@ class PipelineRunner:
         print(f"  Dashboard  : http://localhost:{config.DASHBOARD_PORT}")
         print(f"  Blockchain : {config.GANACHE_URL}")
         print(f"  DB         : {config.DB_PATH}")
+        _engine_labels = {
+            "rules": "Rule-based (default)",
+            "dqn": "DQN (trained)",
+            "rf": "Random Forest (calibrated, SHAP-explained)",
+        }
         print(f"  AI Engine  : "
-              f"{'DQN (trained)' if self.engine.using_dqn else 'Rule-based'}")
+              f"{_engine_labels.get(self.engine.engine_name(), 'Rule-based')}")
         print(f"  Dry-run    : {config.DRY_RUN}")
         print("=" * 60)
         print()
+
+        # ── Seed the backup store with the pre-watch state of the
+        # protected estate so files that existed before monitoring
+        # started are restorable after an attack. ──
+        try:
+            baselined = 0
+            for folder in config.WATCH_FOLDERS:
+                baselined += self.backup.snapshot_directory(
+                    folder, source="startup_baseline"
+                )
+            backup_stats = self.backup.stats()
+            log.info(f"[RUNNER] Backup baseline: {baselined} file(s) captured "
+                     f"({backup_stats['files_restorable']} restorable)")
+        except Exception as e:
+            log.warning(f"[RUNNER] Backup baseline failed: {e}")
+
+        # ── Prime entropy history with the same pre-watch state, so
+        # the FIRST event on a pre-existing file has a real delta
+        # (otherwise a rename encrypting an old file scores only its
+        # raw-entropy points — alert, not quarantine). This is what
+        # the benchmark's "baseline mode" models. ──
+        try:
+            primed = 0
+            for folder in config.WATCH_FOLDERS:
+                primed += self.pipeline.entropy_analyzer.snapshot_directory(
+                    folder
+                )
+            log.info(f"[RUNNER] Entropy history baseline: "
+                     f"{primed} file(s) primed")
+        except Exception as e:
+            log.warning(f"[RUNNER] Entropy baseline failed: {e}")
 
         # Register our callback with the pipeline
         self.pipeline.register_ai_callback(self._on_analyzed_event)
@@ -470,14 +931,117 @@ class PipelineRunner:
         """
         self.stats["total"] += 1
 
+        # ── Capture the current file state for recovery ──
+        # Additive (reads the file, writes only to backup_storage/),
+        # so it runs in every mode. Clean versions (entropy below
+        # threshold) become restore candidates; dirty ones are kept
+        # for forensics but are never restorable.
+        file_path = event.get("file_path", "")
+        original_path = event.get("original_path")
+        if file_path:
+            # ── Ransomware disguise: encrypted file gets renamed ──
+            # Keep the pre-rename version history (clean captures)
+            # usable for restore BEFORE capturing the new (encrypted)
+            # state, so versions stay in time order: without this,
+            # rename-based attacks are quarantined but never recovered.
+            if (event.get("event_type") == "RENAMED"
+                    and original_path
+                    and original_path != file_path):
+                try:
+                    if self.backup.transfer(original_path, file_path):
+                        log.info(
+                            f"[BACKUP] Version history transferred "
+                            f"{os.path.basename(original_path)} → "
+                            f"{os.path.basename(file_path)}")
+                except Exception as e:
+                    log.warning(
+                        f"[BACKUP] Transfer failed for {file_path}: {e}")
+            try:
+                # strict=True: this capture is event-time, so the
+                # triggering event is suspicious and the current content
+                # is the "after" state (likely ciphertext). The lenient
+                # 0.5 margin would label office-format ciphertext
+                # (7.8-8.0) as clean and let restore put it back.
+                self.backup.capture(file_path, event=event, strict=True)
+            except Exception as e:
+                log.warning(f"[BACKUP] Capture failed for {file_path}: {e}")
+
         # ── Make decision ──────────────────────────
         decision = self.engine.decide(event)
         action   = decision["action"]
 
+        # ── Campaign kill override ───────────────────
+        # When a campaign is confirmed, this event's own process
+        # attribution can be missing (a RENAMED event fires after the
+        # handle is closed). Use the process the tracker verified as
+        # writing the earlier campaign files — the malware is the same
+        # process across the whole attack.
+        if (action >= config.ACTION_TERMINATE
+                and decision.get("kill_override")):
+            proc = event.get("process")
+            if not (isinstance(proc, dict)
+                    and proc.get("identity_verified")
+                    and proc.get("pid")):
+                event = dict(event)
+                event["process"] = decision["kill_override"]
+                log.warning(
+                    f"  [KILL] Using campaign-verified process "
+                    f"PID:{decision['kill_override'].get('pid')} "
+                    f"({decision['kill_override'].get('name')})")
+
         # ── Execute response ───────────────────────
         status = execute_response(
-            action, event, self.bc, self.db, decision
+            action, event, self.bc, self.db, decision, backup=self.backup
         )
+
+        # ── Campaign sweep ───────────────────────────
+        # Quarantine + restore the remaining campaign files the
+        # confirmed malware touched. The process is already dealt with
+        # above, so the sweep events carry no kill intent.
+        for sweep_event in (decision.get("sweep_events") or []):
+            se = dict(sweep_event)
+            se_proc = se.get("process")
+            if isinstance(se_proc, dict) and se_proc.get("pid"):
+                se_proc = dict(se_proc, identity_verified=False)
+                se["process"] = se_proc
+            se_decision = dict(decision)
+            se_decision["explanation"] = "Campaign sweep: " + \
+                str(decision.get("explanation") or "")
+            try:
+                sweep_status = execute_response(
+                    config.ACTION_TERMINATE_QUARANTINE, se,
+                    self.bc, self.db, se_decision, backup=self.backup
+                )
+                self.stats["quarantined"] += 1
+                log.warning(
+                    f"  [SWEEP] {os.path.basename(se.get('file_path',''))} "
+                    f"→ {sweep_status}")
+            except Exception as e:
+                log.error(f"  [SWEEP] Failed for "
+                          f"{se.get('file_path')}: {e}")
+
+        # ── Post-kill verification ─────────────────────
+        # The process can be killed while writing a file that has not
+        # yet produced its own detection event (or one that scored
+        # below the alert bar): its ciphertext would remain on disk
+        # after the campaign sweep. Walk the estate once and repair
+        # whatever is still encrypted.
+        if (decision.get("campaign")
+                and action >= config.ACTION_TERMINATE):
+            self._post_kill_verification()
+
+        # ── Mirror the rename-back in the entropy history ──
+        # execute_response may have moved a renamed file back to its
+        # original path; keep the analyzer's per-path history with it.
+        if (isinstance(status, str) and status.endswith("+RESTORED")
+                and original_path
+                and os.path.abspath(original_path) != os.path.abspath(file_path)):
+            try:
+                self.pipeline.entropy_analyzer.transfer_history(
+                    file_path, original_path
+                )
+            except Exception:
+                pass
 
         # ── Update stats ───────────────────────────
         if action == config.ACTION_IGNORE:
@@ -489,6 +1053,110 @@ class PipelineRunner:
         elif action == config.ACTION_TERMINATE_QUARANTINE:
             self.stats["terminated"]  += 1
             self.stats["quarantined"] += 1
+
+    def _post_kill_verification(self):
+        """Walk the protected estate once after a confirmed campaign kill.
+
+        A process can die mid-write on a file that has not produced its
+        own detection event yet (or one that scored below the alert
+        bar); the campaign sweep does not know about such a file. This
+        pass repairs the remainder: quarantines the replaced content,
+        restores the last clean version, and re-primes the entropy
+        history.
+
+        The repair signal is CONTENT, not entropy level: a file is
+        repaired only when its current hash differs from the hash of
+        its last clean version. High entropy alone is not evidence —
+        photos, videos and archives are legitimately high-entropy and
+        legitimately untouched, and must never be quarantined on that
+        basis. Files with no clean backup version cannot be
+        auto-repaired and are left in place for manual recovery.
+        """
+        log.warning("  [SWEEP] Post-kill verification scan ...")
+        repaired = 0
+        seen = set()
+        for root_dir in config.WATCH_FOLDERS:
+            if not os.path.isdir(root_dir):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(root_dir):
+                for name in filenames:
+                    path = os.path.join(dirpath, name)
+                    apath = os.path.abspath(path)
+                    if apath in seen:
+                        continue
+                    seen.add(apath)
+                    try:
+                        candidate = self.backup.find_restore_candidate(path)
+                    except Exception:
+                        continue
+                    if candidate is None or not candidate.get("sha256"):
+                        continue
+                    try:
+                        current_sha = sha256_file(path)
+                    except OSError:
+                        continue
+                    if current_sha == candidate["sha256"]:
+                        continue  # identical to the last clean state
+                    try:
+                        result = self.pipeline.entropy_analyzer.analyze(path)
+                    except Exception:
+                        result = {}
+                    entropy = float(result.get("entropy_overall") or 0.0)
+                    log.warning(
+                        f"  [SWEEP] {name}: content differs from last clean "
+                        f"version (H={entropy:.2f}) — quarantining + "
+                        f"restoring")
+                    event = {
+                        "event_id": (
+                            f"postkill-{int(time.time() * 1000)}-"
+                            f"{os.path.basename(path)}"),
+                        "timestamp": datetime.now().isoformat(),
+                        "event_type": "SWEEP",
+                        "file_path": path,
+                        "file_extension": os.path.splitext(name)[1].lower(),
+                        "file_hash": result.get("file_hash", ""),
+                        "entropy_overall": entropy,
+                        "entropy_delta": 0.0,
+                        "threat_score": result.get("threat_score", 0.0),
+                        "process": {},
+                    }
+                    decision = {
+                        "action": config.ACTION_TERMINATE_QUARANTINE,
+                        "action_name": ACTION_LABELS[
+                            config.ACTION_TERMINATE_QUARANTINE],
+                        "explanation": (
+                            "Post-kill verification: encrypted content "
+                            "present after campaign kill"),
+                        "engine": self.engine.engine_name(),
+                    }
+                    try:
+                        sweep_status = execute_response(
+                            config.ACTION_TERMINATE_QUARANTINE, event,
+                            self.bc, self.db, decision,
+                            backup=self.backup)
+                        if "RESTORED" in str(sweep_status):
+                            repaired += 1
+                            # Re-prime the entropy history with the
+                            # restored (clean) content so future deltas
+                            # are meaningful again.
+                            try:
+                                clean = (self.pipeline.entropy_analyzer
+                                         .analyze(path))
+                                self.backup.capture(
+                                    path,
+                                    event={"event_type": "RESTORED",
+                                           "entropy_overall":
+                                               clean.get("entropy_overall")},
+                                    strict=True)
+                            except Exception:
+                                pass
+                        self.stats["quarantined"] += 1
+                        log.warning(f"  [SWEEP] {name} → {sweep_status}")
+                    except Exception as e:
+                        log.error(f"  [SWEEP] Failed for {path}: {e}")
+        log.warning(
+            f"  [SWEEP] Post-kill verification complete: "
+            f"{repaired} file(s) repaired")
 
     def stop(self):
         self.pipeline.stop()

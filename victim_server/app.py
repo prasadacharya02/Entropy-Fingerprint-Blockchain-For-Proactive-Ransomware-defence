@@ -17,7 +17,10 @@ from catalog import LOCK_EXTENSIONS, family_from_filename
 
 # Paths
 USER_FILES = os.path.join(BASE_DIR, "user_files")
-QUARANTINE_FILES = os.path.join(ROOT_DIR, "quarantine_storage")
+# The quarantine folder is the install-time store created by the
+# operator (config.QUARANTINE_DIR, overridable via ENTROPY_QUARANTINE_DIR).
+QUARANTINE_FILES = getattr(config, "QUARANTINE_DIR",
+                           os.path.join(ROOT_DIR, "quarantine_storage"))
 
 os.makedirs(USER_FILES, exist_ok=True)
 os.makedirs(QUARANTINE_FILES, exist_ok=True)
@@ -57,6 +60,10 @@ def _get_real_folder_path(folder_name: str) -> str | None:
 
 
 def get_file_icon(filename: str) -> str:
+    """Pick an icon from the extension only — exactly like a real file
+    explorer. Unknown extensions (including anything an attacker may
+    have renamed) get the generic icon; the explorer never labels a
+    file as encrypted. Detection and labelling happen in the SOC."""
     ext = os.path.splitext(filename)[1].lower()
     if ext in (".docx", ".doc"): return "doc"
     if ext in (".xlsx", ".xls"): return "xls"
@@ -65,17 +72,15 @@ def get_file_icon(filename: str) -> str:
     if ext in (".zip", ".rar", ".7z"): return "zip"
     if ext in (".txt", ".log"): return "txt"
     if ext in (".exe", ".msi"): return "exe"
-    if ext in (".wncry", ".wncryt", ".ryk", ".lockbit", ".abcd", ".qilin"): return "locked"
-    if ext.startswith("."): return "locked" if len(ext) >= 6 else "unknown"
     return "unknown"
 
 
 def get_folder_stats(folder_path: str, is_quarantine: bool = False):
+    """Neutral folder stats: item count + total size (no attack intel)."""
     total_files = 0
     total_size = 0
-    encrypted = 0
     if not folder_path or not os.path.isdir(folder_path):
-        return 0, 0, 0
+        return 0, 0
     for filename in os.listdir(folder_path):
         if filename.endswith(".meta.json"):
             continue
@@ -87,11 +92,7 @@ def get_folder_stats(folder_path: str, is_quarantine: bool = False):
             total_size += os.path.getsize(file_path)
         except OSError:
             continue
-        if not is_quarantine:
-            extension = os.path.splitext(filename)[1].lower()
-            if extension in LOCK_EXTENSIONS or family_from_filename(filename):
-                encrypted += 1
-    return total_files, total_size, encrypted
+    return total_files, total_size
 
 
 def format_size(size_bytes: int) -> str:
@@ -175,6 +176,11 @@ def vault_logout():
 
 
 # ── Folder / File Listing ────────────────────────────────────
+# The victim explorer is deliberately a NEUTRAL "This PC" view:
+# folders with item counts, files with name/size/modified. It never
+# says how many files are encrypted, which family did it, or that
+# the machine is compromised — a real file explorer can't. All
+# attack assessment lives in the SOC dashboard.
 @app.route("/api/folders")
 def get_folders():
     folders = []
@@ -184,7 +190,7 @@ def get_folders():
         is_q = (folder_name == "Quarantine")
 
         if is_q and not unlocked:
-            # Show it exists but hide count
+            # The vault exists but is locked: show it, hide its contents.
             actual_count = 0
             if os.path.isdir(folder_path):
                 actual_count = len([f for f in os.listdir(folder_path) if not f.endswith(".meta.json")])
@@ -192,21 +198,16 @@ def get_folders():
                 "name": folder_name,
                 "file_count": actual_count,
                 "size": "🔒 Locked",
-                "encrypted": 0,
-                "status": "locked",
                 "locked": True,
                 "privilege": "user_only",
             })
             continue
 
-        files, size, encrypted = get_folder_stats(folder_path, is_q)
-        status = "quarantine" if (is_q and files > 0) else ("compromised" if encrypted > 0 else "safe")
+        files, size = get_folder_stats(folder_path, is_q)
         folders.append({
             "name": folder_name,
             "file_count": files,
             "size": format_size(size),
-            "encrypted": encrypted,
-            "status": status,
             "locked": False,
         })
     return jsonify(folders)
@@ -230,7 +231,9 @@ def get_files(folder):
     if not folder_path or not os.path.isdir(folder_path):
         return jsonify([])
 
-    is_q = (folder == "Quarantine")
+    # A real file explorer only knows: name, size, modified, icon.
+    # No "encrypted" flags, no family attribution, no note markers —
+    # a file renamed by an attacker simply appears under its new name.
     files = []
     for filename in sorted(os.listdir(folder_path)):
         if filename.endswith(".meta.json"): continue
@@ -239,16 +242,11 @@ def get_files(folder):
         try:
             file_stat = os.stat(file_path)
             extension = os.path.splitext(filename)[1].lower()
-            family = _file_family(filename)
             files.append({
                 "name": filename,
                 "size": format_size(file_stat.st_size),
                 "modified": datetime.fromtimestamp(file_stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                "icon": "locked" if is_q else get_file_icon(filename),
-                "encrypted": is_q or (family is not None),
-                "quarantined": is_q,
-                "family": family or ("quarantine" if is_q else None),
-                "is_note": _ransom_note_family(filename),
+                "icon": get_file_icon(filename),
                 "extension": extension,
             })
         except OSError:

@@ -6,12 +6,10 @@
 import sys
 import os
 import json
-import hashlib
-import random
 import threading
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ── Fix paths FIRST before anything else ──────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -114,6 +112,8 @@ def stats():
                     THEN 1 ELSE 0 END)      AS terminated,
                 SUM(CASE WHEN action = 3
                     THEN 1 ELSE 0 END)      AS quarantined,
+                SUM(CASE WHEN restore_result IS NOT NULL
+                    THEN 1 ELSE 0 END)      AS recovery,
                 ROUND(AVG(entropy), 2)      AS avg_entropy,
                 ROUND(MAX(entropy), 2)      AS max_entropy
             FROM events
@@ -127,6 +127,7 @@ def stats():
             "threats"      : row["threats"]     or 0,
             "terminated"   : row["terminated"]  or 0,
             "quarantined"  : row["quarantined"] or 0,
+            "recovery"     : row["recovery"]    or 0,
             "avg_entropy"  : row["avg_entropy"] or 0,
             "max_entropy"  : row["max_entropy"] or 0,
             "blockchain_tx": bc_count
@@ -283,6 +284,47 @@ def live_stats():
         return _api_error("live statistics unavailable")
 
 
+@app.route("/api/backup")
+def backup_status():
+    """Status of the clean-copy backup store (recovery source)."""
+    try:
+        from response.backup_manager import BackupManager
+        manager = BackupManager()
+        return jsonify({
+            "stats": manager.stats(),
+            "files": manager.list_backups(),
+            "dry_run": bool(config.DRY_RUN),
+        })
+    except Exception:
+        log.exception("Backup API failed")
+        return _api_error("backup service unavailable")
+
+
+@app.route("/api/reports")
+def reports():
+    """List forensic incident reports, newest first."""
+    try:
+        from response.forensic_report import list_reports
+        return jsonify(list_reports())
+    except Exception:
+        log.exception("Reports API failed")
+        return _api_error("forensic report service unavailable")
+
+
+@app.route("/api/reports/<path:name>")
+def report_detail(name):
+    """Fetch one forensic report by file name."""
+    try:
+        from response.forensic_report import load_report
+        data = load_report(name)
+        if data is None:
+            return _api_error("report not found", status=404)
+        return jsonify(data)
+    except Exception:
+        log.exception("Report detail API failed")
+        return _api_error("forensic report service unavailable")
+
+
 # ═══════════════════════════════════════════════════
 # WEBSOCKET — Real Time Push
 # ═══════════════════════════════════════════════════
@@ -293,12 +335,62 @@ def handle_connect():
     emit("status", {"message": "Connected to Entropy Dashboard"})
 
 
+def _last_event_id() -> int:
+    """Highest row id already pushed to websocket clients (per process)."""
+    try:
+        db = get_db()
+        row = db.execute("SELECT COALESCE(MAX(id), 0) AS last_id FROM events").fetchone()
+        db.close()
+        return int(row["last_id"] or 0)
+    except Exception:
+        return 0
+
+
 def push_updates():
+    """Real-time push loop.
+
+    Two channels, both driven by the shared events database (the
+    pipeline process writes, the dashboard process reads):
+
+    * ``new_event``   — every filesystem/detection event as soon as it
+                        is persisted (sub-second), full row payload so
+                        the SOC timeline, entropy graph, and alert
+                        panel update live without polling.
+    * ``live_update`` — counter heartbeat (totals / threats).
+    """
+    last_id = _last_event_id()
     while True:
         try:
             with app.app_context():
-                db  = get_db()
-                row = db.execute("""
+                # ── 1) Push any events the pipeline persisted since
+                #       the last pass (this is the real-time channel).
+                db = get_db()
+                new_rows = db.execute(
+                    "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 100",
+                    (last_id,),
+                ).fetchall()
+                if new_rows:
+                    for row in new_rows:
+                        try:
+                            socketio.emit("new_event", dict(row))
+                        except Exception:
+                            log.exception("new_event emit failed")
+                        last_id = int(row["id"])
+                else:
+                    # DB was reset/rotated under us — resync the cursor
+                    # so future events are still pushed.
+                    cur_max = int(
+                        db.execute(
+                            "SELECT COALESCE(MAX(id), 0) AS m FROM events"
+                        ).fetchone()["m"] or 0
+                    )
+                    if cur_max < last_id:
+                        last_id = cur_max
+                db.close()
+
+                # ── 2) Counter heartbeat.
+                db = get_db()
+                stat = db.execute("""
                     SELECT COUNT(*) AS total,
                            SUM(CASE WHEN action >= 1
                                THEN 1 ELSE 0 END) AS threats
@@ -307,13 +399,13 @@ def push_updates():
                 db.close()
 
                 socketio.emit("live_update", {
-                    "total"   : row["total"]   or 0,
-                    "threats" : row["threats"] or 0,
+                    "total"   : stat["total"]   or 0,
+                    "threats" : stat["threats"] or 0,
                     "time"    : datetime.now().strftime("%H:%M:%S")
                 })
         except Exception:
             log.exception("Live update push failed")
-        time.sleep(1)
+        time.sleep(0.4)
 
 
 # ═══════════════════════════════════════════════════
@@ -412,73 +504,22 @@ def flagged_processes():
 
 @app.route("/api/demo/trigger", methods=["POST"])
 def demo_trigger():
-    """Inject ransomware events for demo + log to blockchain."""
-    try:
-        db = get_db()
+    """Demo injection is disabled and rejected with 409 Conflict.
 
-        demo_files = [
-            "financial_report_Q3.xlsx",
-            "customer_database.db",
-            "employee_records.docx",
-            "product_designs.pdf",
-            "source_code.zip"
-        ]
-
-        base_time = datetime.now()
-        injected_count = 0
-
-        for i, fname in enumerate(demo_files):
-            event_time = base_time + timedelta(seconds=i)
-            fake_path  = f"C:\\Users\\demo\\Documents\\{fname}.locked"
-            entropy    = round(random.uniform(7.85, 7.99), 4)
-            delta      = round(random.uniform(2.5, 3.5), 4)
-            fake_pid   = random.randint(1000, 9999)
-            fingerprint = hashlib.sha256(fake_path.encode()).hexdigest()
-
-            # 1. Save to SQLite database
-            db.execute("""
-                INSERT INTO events
-                (timestamp, file_path, event_type, entropy, entropy_delta,
-                 pid, process_name, action, status)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            """, (
-                event_time.isoformat(),
-                fake_path,
-                "RENAMED",
-                entropy,
-                delta,
-                fake_pid,
-                "ransomware_demo.exe",
-                3,
-                "TERMINATED+QUARANTINED"
-            ))
-
-            # 2. ALSO log to Blockchain
-            try:
-                if bc:
-                    bc.log_event({
-                        "fingerprint" : fingerprint,
-                        "threat_type" : "ransomware",
-                        "pid"         : fake_pid,
-                        "entropy"     : entropy,
-                        "process"     : "ransomware_demo.exe",
-                        "file_path"   : fake_path,
-                        "action"      : "TERMINATE_AND_QUARANTINE",
-                        "status"      : "confirmed"
-                    })
-            except Exception as bc_err:
-                print(f"[DEMO] Blockchain log error: {bc_err}")
-
-            injected_count += 1
-
-        db.commit()
-        db.close()
-
-        return jsonify({"status": "ok", "injected": injected_count})
-
-    except Exception as e:
-        log.exception("Demo trigger failed")
-        return _api_error("demo trigger failed")
+    Synthetic events must come from the controlled attack simulator
+    (attacker console), which modifies only the victim fixture estate.
+    Fabricated events injected from the dashboard would pollute the
+    event log and the audit ledger, so the endpoint refuses loudly
+    instead of silently complying.
+    """
+    return jsonify({
+        "status": "rejected",
+        "error": (
+            "Demo injection is disabled. Run a controlled simulation "
+            "from the attacker console (http://127.0.0.1:8001) against "
+            "the victim fixture estate."
+        ),
+    }), 409
 
 
 @app.route("/api/threat-level")

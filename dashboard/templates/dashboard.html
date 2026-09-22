@@ -215,7 +215,7 @@ body {
 .tl-level { font-size: 18px; font-weight: 700; letter-spacing: 2px; min-width: 130px; text-align: right; font-family: 'Doto', monospace; }
 
 /* METRICS */
-.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+.metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 20px; }
 .metric { background: var(--panel); border: 1px solid var(--border); padding: 18px 20px; }
 .metric-lbl { font-size: 11px; letter-spacing: 2px; color: var(--text-mute); text-transform: uppercase; margin-bottom: 10px; font-family: 'Roboto Mono', monospace; font-weight: 500; }
 .metric-val { font-size: 34px; font-weight: 600; letter-spacing: 1px; line-height: 1; color: var(--text); font-family: 'Roboto Mono', monospace; }
@@ -239,6 +239,12 @@ body {
 .event-row { padding: 12px 20px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 140px 70px 1fr 90px; gap: 12px; align-items: center; font-size: 14px; }
 .event-row:hover { background: var(--panel-2); }
 .event-row:last-child { border-bottom: none; }
+.event-row.live { animation: liveflash 1.2s ease-out; }
+@keyframes liveflash {
+  0%   { background: rgba(74, 222, 128, 0.22); }
+  100% { background: transparent; }
+}
+#sys-dot.live { animation: pulse 1s infinite; box-shadow: 0 0 8px rgba(74,222,128,.8); }
 .event-time { color: var(--text-mute); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
 .event-tag { font-size: 12px; letter-spacing: 1.5px; padding: 3px 6px; border: 1px solid; text-align: center; text-transform: uppercase; font-weight: 700; }
 .event-tag.normal { color: var(--text-dim); border-color: var(--border-hi); }
@@ -408,6 +414,11 @@ body {
       <div class="metric-val danger" id="m-threats">0000</div>
       <div class="metric-sub">blocked / logged</div>
     </div>
+    <div class="metric">
+      <div class="metric-lbl">RECOVERY · RST</div>
+      <div class="metric-val" id="m-recovery">0000</div>
+      <div class="metric-sub">restored from clean backup</div>
+    </div>
   </div>
 
   <!-- EVENT STREAM + DQN DECISION -->
@@ -524,6 +535,7 @@ body {
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/socket.io/socket.io.js"></script>
 <script>
 const START_TIME = Date.now();
 
@@ -554,10 +566,14 @@ function actionTag(a) {
 function eventDesc(e) {
   const name = fname(e.file_path);
   const ent = (e.entropy || 0).toFixed(2);
-  if (e.action >= 3) return `THREAT: ${name} → E=${ent}`;
-  if (e.action >= 2) return `KILL: ${name} → E=${ent}`;
-  if (e.action >= 1) return `ALERT: ${name} → E=${ent}`;
-  return `${e.event_type || 'EVT'}: ${name}`;
+  let base;
+  if (e.action >= 3) base = `THREAT: ${name} → E=${ent}`;
+  else if (e.action >= 2) base = `KILL: ${name} → E=${ent}`;
+  else if (e.action >= 1) base = `ALERT: ${name} → E=${ent}`;
+  else base = `${e.event_type || 'EVT'}: ${name}`;
+  // Show what the defense actually did (KILL, QUARANTINE, RESTORE…).
+  if (e.outcome && e.action >= 2) base += ` → ${e.outcome}`;
+  return base;
 }
 
 let chart;
@@ -602,11 +618,13 @@ async function loadStats() {
     const threats = d.threats || 0;
     const bcTx = d.blockchain_tx || 0;
     const quar = d.quarantined || 0;
+    const recovery = d.recovery || 0;
 
     document.getElementById('m-events').textContent = pad(total);
     document.getElementById('m-chain').textContent = pad(bcTx);
     document.getElementById('m-vault').textContent = pad(quar);
     document.getElementById('m-threats').textContent = pad(threats);
+    document.getElementById('m-recovery').textContent = pad(recovery);
     document.getElementById('chain-val').textContent = bcTx + ' TX';
 
     const level = total === 0 ? 0 : Math.min(100, Math.round((threats / total) * 150));
@@ -790,6 +808,68 @@ initChart();
 loadAll();
 setInterval(loadStats, 1000);
 setInterval(loadAll, 2000);
+
+// ────────────────────────────────────────────────────────────
+// REAL-TIME CHANNEL
+// The pipeline persists every file/detection event to the shared
+// database; the dashboard backend pushes each new row here over
+// socket.io as soon as it lands. We stream them into the event
+// feed, entropy graph, and threat state the moment they happen —
+// the polling loops above are just a resilience fallback.
+// ────────────────────────────────────────────────────────────
+const socket = io({ transports: ['websocket', 'polling'] });
+
+function eventRowHtml(e, live) {
+  return `<div class="event-row${live ? ' live' : ''}">
+    <div class="event-time">${ts(e.timestamp)}</div>
+    <div>${actionTag(e.action)}</div>
+    <div class="event-desc">${escapeHtml(eventDesc(e))}</div>
+    <div class="event-src">${escapeHtml(e.pid ? 'PID:' + e.pid : '127.0.0.1')}</div>
+  </div>`;
+}
+
+function pushEventRow(e) {
+  const el = document.getElementById('event-stream');
+  if (!el) return;
+  if (el.querySelector('.empty')) el.innerHTML = '';
+  el.insertAdjacentHTML('afterbegin', eventRowHtml(e, true));
+  // Keep the live feed bounded (the 2s poll re-syncs the full list).
+  while (el.children.length > 30) el.removeChild(el.lastChild);
+}
+
+function pushChartPoint(d) {
+  if (!chart) return;
+  chart.data.labels.push(tsTime(d.timestamp));
+  chart.data.datasets[0].data.push(d.entropy || 0);
+  chart.data.datasets[1].data.push(Math.abs(d.entropy_delta || 0));
+  chart.data.datasets[2].data.push(7.5);
+  while (chart.data.labels.length > 60) {
+    chart.data.labels.shift();
+    chart.data.datasets.forEach(ds => ds.data.shift());
+  }
+  chart.update('none');
+}
+
+socket.on('connect', () => {
+  const dot = document.getElementById('sys-dot');
+  if (dot) dot.classList.add('live');
+});
+
+socket.on('new_event', (e) => {
+  pushEventRow(e);
+  if (e.entropy != null) pushChartPoint(e);
+  if (e.action >= 1) {
+    // Threat surfaced — refresh counters/threat state immediately.
+    loadStats();
+    loadProcesses();
+  }
+});
+
+socket.on('live_update', (d) => {
+  // Counter heartbeat; full stat refresh is cheap and keeps all
+  // panels (metrics, distribution, threat level) in lock-step.
+  loadStats();
+});
 </script>
 </body>
 </html>

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _EVENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS events (
     status        TEXT,
     requested_action INTEGER,
     outcome       TEXT,
+    restore_result TEXT,
     dry_run       INTEGER,
     engine        TEXT,
     confidence    REAL,
@@ -57,6 +58,7 @@ def _ensure_events_columns(connection: sqlite3.Connection) -> None:
         "status": "TEXT",
         "requested_action": "INTEGER",
         "outcome": "TEXT",
+        "restore_result": "TEXT",
         "dry_run": "INTEGER",
         "engine": "TEXT",
         "confidence": "REAL",

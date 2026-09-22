@@ -157,9 +157,12 @@
       </aside>
 
       <section class="main">
+        <!-- Neutral status bar, like a real explorer: item counts only.
+             Attack assessment is not part of the file explorer — that
+             is the SOC dashboard's job. -->
         <div class="status-strip">
           <div class="stats-mini" id="summaryText">Loading…</div>
-          <div id="healthBadge" class="badge ok">Healthy</div>
+          <div class="badge protected">🛡️ Ransomware Shield · Monitoring</div>
         </div>
         <div class="content" id="content"></div>
       </section>
@@ -228,15 +231,6 @@
     document.querySelectorAll(`.side-item[data-goto="${folder}"]`).forEach(el => el.classList.add("active"));
   }
 
-  function statusBadge(status) {
-    const s = (status || "OPERATIONAL").toUpperCase();
-    if (s === "OPERATIONAL") return { text: "Healthy", cls: "ok" };
-    if (s === "PROTECTED") return { text: "Protected · Quarantined", cls: "protected" };
-    if (s === "UNDER ATTACK") return { text: "UNDER ATTACK", cls: "warn" };
-    if (s === "COMPROMISED") return { text: "COMPROMISED", cls: "danger" };
-    return { text: s, cls: "warn" };
-  }
-
   async function fetchJSON(url) {
     const res = await fetch(url);
     if (!res.ok && res.status !== 401) throw new Error(url + " failed");
@@ -275,24 +269,21 @@
     else showVaultLogin();
   }
 
-  async function refreshStatus() {
-    try {
-      statusCache = await fetchJSON("/api/status");
-      const b = statusBadge(statusCache.system_status);
-      const badge = document.getElementById("healthBadge");
-      badge.className = "badge " + b.cls;
-      badge.textContent = b.text;
-      vaultUnlocked = !!statusCache.vault_unlocked;
-      updateVaultUI();
+  // Neutral explorer status bar — item counts only, exactly like the
+  // Windows File Explorer status bar. No attack intelligence here.
+  function setNeutralStatus(text) {
+    const el = document.getElementById("summaryText");
+    if (el) el.textContent = text || "";
+  }
 
-      const q = statusCache.quarantined_files || 0;
-      const enc = statusCache.encrypted_files || 0;
-      document.getElementById("summaryText").innerHTML =
-        `<span><b>${statusCache.total_files || 0}</b> user files</span>` +
-        `<span><b>${enc}</b> encrypted</span>` +
-        `<span><b>${q}</b> quarantined</span>` +
-        (statusCache.detected_family ? `<span>family: <b>${statusCache.detected_family}</b></span>` : "");
-    } catch (e) { console.error(e); }
+  async function refreshStatus() {
+    await checkVault();
+    if (currentFolder) {
+      setNeutralStatus(`${fileCache.length} item${fileCache.length === 1 ? "" : "s"}`);
+    } else {
+      const total = folderCache.filter(f => f.name !== "Quarantine").reduce((a, f) => a + (f.file_count || 0), 0);
+      setNeutralStatus(`${total} files`);
+    }
   }
 
   async function showHome() {
@@ -307,27 +298,26 @@
 
     const totalFiles = folderCache.filter(f => f.name !== "Quarantine").reduce((a, f) => a + (f.file_count || 0), 0);
 
+    // A plain "This PC" view: folders with item counts + the disk.
+    // No attack status, no "encrypted" markers.
     const cards = [
       ...folderCache.map(f => ({
         name: f.name, count: f.file_count, size: f.size,
-        encrypted: f.encrypted, status: f.status, locked: f.locked, isFolder: true,
+        locked: f.locked, isFolder: true,
       })),
-      { name: "Local Disk (C:)", count: totalFiles, size: "", encrypted: 0, status: "disk", isFolder: false }
+      { name: "Local Disk (C:)", count: totalFiles, size: "", locked: false, isFolder: false }
     ];
 
     const html = `<div class="grid">${cards.map(c => {
       const isQ = c.name === "Quarantine";
-      const compromised = c.status === "compromised";
       const isLocked = c.locked;
-      let meta = "";
-      if (isQ && isLocked) meta = `🔒 Locked · ${c.count || 0} files`;
-      else if (isQ) meta = `${c.count} blocked file${c.count === 1 ? "" : "s"}`;
-      else if (c.status === "disk") meta = `NTFS · ${c.count} files`;
-      else if (compromised) meta = `${c.count} items · encrypted`;
-      else meta = `${c.count} items`;
+      let meta;
+      if (isQ && isLocked) meta = `🔒 Locked`;
+      else if (isQ) meta = `${c.count || 0} items`;
+      else meta = `${c.count || 0} items`;
 
-      const cls = ["card", compromised ? "compromised" : "", isQ ? "quarantine" : "", isLocked ? "locked" : ""].join(" ");
-      const click = c.status === "disk" ? "showHome()" : `openFolder('${c.name}')`;
+      const cls = ["card", isQ ? "quarantine" : "", isLocked ? "locked" : ""].join(" ");
+      const click = c.name === "Local Disk (C:)" ? "showHome()" : `openFolder('${c.name}')`;
 
       return `<div class="${cls}" onclick="${click}">
                 <div class="folder-ico">${FOLDER_ICONS[c.name] || "📁"}</div>
@@ -336,7 +326,7 @@
               </div>`;
     }).join("")}</div>`;
     document.getElementById("content").innerHTML = html;
-    await refreshStatus();
+    setNeutralStatus(`${totalFiles} files`);
   }
 
   async function openFolder(name) {
@@ -377,8 +367,9 @@
     await refreshStatus();
   }
 
+  // Icon from the extension only — a real explorer never reveals
+  // whether a file is "encrypted"; it just shows a file icon.
   function fileIcon(file) {
-    if (currentFolder === "Quarantine" || file.encrypted) return "🔒";
     const ext = (file.extension || "").toLowerCase();
     if ([".jpg",".jpeg",".png",".gif",".bmp"].includes(ext)) return "🖼️";
     if ([".doc",".docx"].includes(ext)) return "📄";
@@ -401,34 +392,25 @@
       return;
     }
 
+    // Plain explorer columns — Name / Date modified / Type / Size.
+    // No status pills, no family labels, no note markers.
     const rows = files.map(f => {
-      const isQ = currentFolder === "Quarantine" || f.quarantined;
-      const pill = isQ
-        ? `<span class="pill q">ISOLATED</span>`
-        : (f.encrypted
-            ? `<span class="pill enc">ENCRYPTED${f.family ? " · " + f.family : ""}</span>`
-            : `<span class="pill ok">SAFE</span>`);
-      const icoCls = isQ ? "q" : (f.encrypted ? "locked" : "");
       return `<tr onclick="previewFile('${currentFolder}', \`${f.name.replace(/`/g, "")}\`)">
                 <td><div class="file-name">
-                  <div class="f-ico ${icoCls}">${fileIcon(f)}</div>
-                  <div>
-                    <div>${escapeHtml(f.name)}</div>
-                    ${f.is_note ? `<div style="font-size:11px;color:#d13438;font-weight:600;">Ransom note</div>` : ""}
-                  </div>
+                  <div class="f-ico">${fileIcon(f)}</div>
+                  <div>${escapeHtml(f.name)}</div>
                 </div></td>
                 <td>${f.modified || "-"}</td>
                 <td>${f.extension || "File"}</td>
                 <td>${f.size || "-"}</td>
-                <td>${pill}</td>
               </tr>`;
     }).join("");
 
     document.getElementById("content").innerHTML = `
       <table class="file-table">
         <thead><tr>
-          <th style="width:42%">Name</th><th style="width:16%">Date modified</th>
-          <th style="width:12%">Type</th><th style="width:12%">Size</th><th style="width:18%">Status</th>
+          <th style="width:50%">Name</th><th style="width:20%">Date modified</th>
+          <th style="width:15%">Type</th><th style="width:15%">Size</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;

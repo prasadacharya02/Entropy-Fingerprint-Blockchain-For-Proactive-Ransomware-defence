@@ -2,6 +2,8 @@
 
 Starts the detection pipeline, SOC dashboard, victim explorer, and attacker
 console together, then shuts them down on Ctrl+C.
+
+This is the industry-level entry point for final year demo.
 """
 
 from __future__ import annotations
@@ -28,25 +30,51 @@ def _env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("ENTROPY_WATCH_FOLDERS", "victim_server/user_files")
     env.setdefault("ENTROPY_DASHBOARD_HOST", "0.0.0.0")
-    env.setdefault("ENTROPY_DRY_RUN", "true")
+    env.setdefault("ENTROPY_VICTIM_HOST", "0.0.0.0")
+    env.setdefault("ENTROPY_DRY_RUN", "false")
     env.setdefault("ENTROPY_CONTROL_TOKEN", "entropy-lab")
+    env.setdefault("ENTROPY_BLOCKCHAIN_FALLBACK", "true")
     env.setdefault("PYTHONUNBUFFERED", "1")
     return env
 
 
+def _ensure_quarantine():
+    """Install-time quarantine folder creation - required by spec."""
+    import config
+    q_dir = config.QUARANTINE_DIR
+    b_dir = config.BACKUP_DIR
+    os.makedirs(q_dir, exist_ok=True)
+    os.makedirs(b_dir, exist_ok=True)
+    os.makedirs(config.LOG_DIR, exist_ok=True)
+    os.makedirs(config.REPORTS_DIR, exist_ok=True)
+    print(f"[install] Quarantine folder created by user at install: {q_dir}")
+    print(f"[install] Backup vault: {b_dir}")
+    print(f"[install] Reports: {config.REPORTS_DIR}")
+    print(f"[install] Vault credentials: {config.VAULT_USER} / PIN {config.VAULT_PIN}")
+
+
 def main() -> int:
+    _ensure_quarantine()
+
     fixtures = ROOT / "victim_server" / "create_fake_files.py"
-    if not (ROOT / "victim_server" / "user_files").exists():
+    victim_files = ROOT / "victim_server" / "user_files"
+    if not victim_files.exists() or not any(victim_files.iterdir()):
+        print("[lab] Creating victim fixtures...")
         subprocess.check_call([PYTHON, str(fixtures), "--clean"], cwd=ROOT)
 
-    print("=" * 60)
-    print("  ENTROPY Command Platform")
-    print("  SOC       : http://127.0.0.1:5000")
-    print("  Attacker  : http://127.0.0.1:8001")
-    print("  Victim PC : http://127.0.0.1:8002")
-    print("  Watching  : victim_server/user_files")
-    print("  Dry-run   : on  |  control token set for remote lab UI")
-    print("=" * 60)
+    print("=" * 70)
+    print("  ENTROPY - Ransomware Shield | Final Year Major Project")
+    print("  Industry Level - Proactive Defence with Blockchain Audit")
+    print("=" * 70)
+    print("  SOC Dashboard   : http://127.0.0.1:5000  (real-time feed)")
+    print("  Victim PC       : http://127.0.0.1:5001  (neutral explorer)")
+    print("  Attacker Console: http://127.0.0.1:8001  (launch attacks)")
+    print("  Watching        : victim_server/user_files")
+    print("  Quarantine      : quarantine_storage/ (install-time, PIN locked)")
+    print("  Backup Vault    : backup_storage/ (versioned clean copies)")
+    print("  Dry-run         : OFF - real kill+quarantine+restore active")
+    print("  Blockchain      : Local ledger fallback (Ganache optional)")
+    print("=" * 70)
 
     env = _env()
     processes: list[subprocess.Popen] = []
@@ -54,13 +82,16 @@ def main() -> int:
         for name, command in SERVICES:
             proc = subprocess.Popen(command, cwd=ROOT, env=env)
             processes.append(proc)
-            print(f"[lab] started {name} pid={proc.pid}")
+            print(f"[lab] started {name:12s} pid={proc.pid}")
+
+        print("\n[lab] All services running. Press Ctrl+C to stop.")
+        print("[lab] Open attacker console to launch WannaCry demo.\n")
 
         while True:
-            for name, proc in zip((s[0] for s in SERVICES), processes):
+            for (svc_name, _), proc in zip(SERVICES, processes):
                 code = proc.poll()
                 if code is not None:
-                    print(f"[lab] {name} exited with {code}")
+                    print(f"[lab] {svc_name} exited with {code} - restarting not supported, shutting down")
                     return code or 1
             time.sleep(0.5)
     except KeyboardInterrupt:
@@ -69,15 +100,21 @@ def main() -> int:
     finally:
         for proc in processes:
             if proc.poll() is None:
-                proc.send_signal(signal.SIGINT)
+                try:
+                    proc.send_signal(signal.SIGINT)
+                except Exception:
+                    pass
         deadline = time.time() + 8
         for proc in processes:
             remaining = max(0.1, deadline - time.time())
             try:
                 proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
-                proc.kill()
-        print("[lab] stopped")
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        print("[lab] stopped - estate preserved for forensics")
 
 
 if __name__ == "__main__":
