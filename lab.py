@@ -40,10 +40,17 @@ def _set_default(env: dict[str, str], key: str, value: str) -> None:
         env[key] = value
 
 
-def _env() -> dict[str, str]:
+def _env(dry_run: bool | None = None) -> dict[str, str]:
     env = os.environ.copy()
     _set_default(env, "ENTROPY_DASHBOARD_HOST", "0.0.0.0")
     _set_default(env, "ENTROPY_VICTIM_HOST", "0.0.0.0")
+    # The lab is the LIVE demo: kill the attacker, move the file to the
+    # quarantine vault, restore the clean copy. A .env copied from an
+    # older .env.example set ENTROPY_DRY_RUN=true, which silently
+    # turned all of that into log lines. Dry-run is now an explicit
+    # opt-in: `python lab.py --dry-run`.
+    if dry_run is not None:
+        env["ENTROPY_DRY_RUN"] = "true" if dry_run else "false"
     _set_default(env, "ENTROPY_DRY_RUN", "false")
     _set_default(env, "ENTROPY_CONTROL_TOKEN", "entropy-lab")
     _set_default(env, "ENTROPY_BLOCKCHAIN_FALLBACK", "true")
@@ -81,7 +88,8 @@ def _ensure_quarantine():
     print(f"[install] Vault credentials: {config.VAULT_USER} / PIN {config.VAULT_PIN}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     _ensure_quarantine()
 
     fixtures = ROOT / "victim_server" / "create_fake_files.py"
@@ -97,7 +105,7 @@ def main() -> int:
     print("  SOC Dashboard   : http://127.0.0.1:5000  (real-time feed)")
     print("  Victim PC       : http://127.0.0.1:5001  (neutral explorer)")
     print("  Attacker Console: http://127.0.0.1:8001  (launch attacks)")
-    env = _env()
+    env = _env(dry_run="--dry-run" in argv)
     dry_run = env["ENTROPY_DRY_RUN"].strip().lower() in {"1", "true", "yes", "on"}
     print(f"  Watching        : {env['ENTROPY_WATCH_FOLDERS']}")
     print("  Quarantine      : quarantine_storage/ (install-time, PIN locked)")

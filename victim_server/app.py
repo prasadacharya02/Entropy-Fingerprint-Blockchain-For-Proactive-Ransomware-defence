@@ -1,5 +1,6 @@
 """Read-only victim file explorer for the controlled ransomware lab."""
 from __future__ import annotations
+import json
 import os
 import sys
 import time
@@ -152,8 +153,10 @@ def vault_status():
 @app.route("/api/vault/login", methods=["POST"])
 def vault_login():
     data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    pin = (data.get("pin") or data.get("password") or "").strip()
+    # The PIN is the credential; the username field is pre-filled in
+    # the UI and may be left blank (it defaults to the vault owner).
+    username = (data.get("username") or "").strip() or VAULT_USER
+    pin = str(data.get("pin") or data.get("password") or "").strip()
 
     if username == VAULT_USER and secrets.compare_digest(pin, VAULT_PIN):
         session["vault_auth"] = True
@@ -213,6 +216,80 @@ def get_folders():
     return jsonify(folders)
 
 
+def _quarantine_meta(file_path: str) -> dict:
+    """Read the defender's sidecar record for a quarantined file."""
+    try:
+        with open(file_path + ".meta.json", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def _quarantine_entry(filename: str) -> dict | None:
+    path = os.path.join(QUARANTINE_FILES, filename)
+    if filename.endswith(".meta.json") or not os.path.isfile(path):
+        return None
+    meta = _quarantine_meta(path)
+    st = os.stat(path)
+    original = meta.get("original_path") or ""
+    original_name = meta.get("original_name") or os.path.basename(original) \
+        or filename
+    try:
+        from_folder = os.path.relpath(os.path.dirname(original), USER_FILES)
+        if from_folder.startswith(".."):
+            from_folder = os.path.dirname(original)
+    except ValueError:
+        from_folder = os.path.dirname(original)
+    killed = meta.get("terminated_process") or {}
+    proc = meta.get("process") or {}
+    quarantined_at = meta.get("quarantine_time") or \
+        datetime.fromtimestamp(st.st_mtime).isoformat()
+    return {
+        "name": filename,
+        "original_name": original_name,
+        "from_folder": from_folder if original else "",
+        "quarantined_at": quarantined_at.replace("T", " ")[:19],
+        "size": format_size(st.st_size),
+        "modified": datetime.fromtimestamp(st.st_mtime).strftime(
+            "%Y-%m-%d %H:%M"),
+        "extension": os.path.splitext(filename)[1].lower(),
+        "icon": get_file_icon(original_name),
+        "fingerprint": (meta.get("fingerprint") or "")[:16],
+        "entropy": meta.get("entropy"),
+        "process_killed": bool(killed.get("terminated")),
+        "killed_pid": killed.get("pid"),
+        "killed_name": killed.get("name"),
+        "writer_pid": proc.get("pid") if isinstance(proc, dict) else None,
+        "writer_name": proc.get("name") if isinstance(proc, dict) else None,
+        "read_only": not os.access(path, os.W_OK),
+        "_sort": quarantined_at,
+    }
+
+
+@app.route("/api/quarantine")
+def quarantine_listing():
+    """Vault view: every contained file with its containment record."""
+    if not _vault_unlocked():
+        return jsonify({"error": "privileged_access_required",
+                        "auth_required": True, "files": []}), 401
+    entries = []
+    if os.path.isdir(QUARANTINE_FILES):
+        for filename in os.listdir(QUARANTINE_FILES):
+            entry = _quarantine_entry(filename)
+            if entry:
+                entries.append(entry)
+    entries.sort(key=lambda e: e.pop("_sort"), reverse=True)
+    killed = sorted({(e["killed_pid"], e["killed_name"]) for e in entries
+                     if e["process_killed"] and e["killed_pid"]},
+                    key=lambda k: k[0] or 0)
+    return jsonify({
+        "vault_path": QUARANTINE_FILES,
+        "count": len(entries),
+        "processes_killed": [{"pid": p, "name": n} for p, n in killed],
+        "files": entries,
+    })
+
+
 @app.route("/api/files/<folder>")
 def get_files(folder):
     if folder not in ALLOWED_FOLDERS:
@@ -230,6 +307,12 @@ def get_files(folder):
     folder_path = _get_real_folder_path(folder)
     if not folder_path or not os.path.isdir(folder_path):
         return jsonify([])
+
+    if folder == "Quarantine":
+        entries = [e for e in (_quarantine_entry(f)
+                               for f in os.listdir(folder_path)) if e]
+        entries.sort(key=lambda e: e.pop("_sort"), reverse=True)
+        return jsonify(entries)
 
     # A real file explorer only knows: name, size, modified, icon.
     # No "encrypted" flags, no family attribution, no note markers —
@@ -310,6 +393,31 @@ def preview_file(folder, filename):
     file_path = _safe_file_path(folder, filename)
     if file_path is None or not file_path.is_file():
         return jsonify({"error": "file not found"}), 404
+    if folder == "Quarantine":
+        entry = _quarantine_entry(filename) or {}
+        meta = _quarantine_meta(str(file_path))
+        head = file_path.read_bytes()[:64]
+        lines = [
+            "QUARANTINED FILE — isolated evidence (read-only)",
+            "",
+            f"Original file   : {entry.get('original_name')}",
+            f"Original folder : {entry.get('from_folder') or '-'}",
+            f"Quarantined at  : {entry.get('quarantined_at')}",
+            f"SHA3-256        : {meta.get('fingerprint') or '-'}",
+            f"Entropy         : {meta.get('entropy') if meta.get('entropy') is not None else '-'}",
+            "Process killed  : " + (
+                f"PID {entry.get('killed_pid')} ({entry.get('killed_name')})"
+                if entry.get("process_killed") else "none recorded"),
+            "",
+            "The clean copy was restored to the original folder from the",
+            "backup vault. This file holds the attacker's ciphertext and",
+            "cannot be decrypted (there is no key).",
+            "",
+            "First bytes: " + head.hex(" "),
+        ]
+        return jsonify({"name": filename, "preview_type": "quarantine",
+                        "content": "\n".join(lines), "truncated": False,
+                        "record": entry})
     try:
         sample = file_path.read_bytes()[:65536]
         if b"\x00" in sample:

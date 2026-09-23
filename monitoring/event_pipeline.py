@@ -121,6 +121,15 @@ class AnalyzedEventStore:
 # The main connector between monitor and entropy calculator.
 # ============================================================
 
+def _is_genuine_rename(event: dict) -> bool:
+    """True unless the 'rename' source still exists (inode reuse)."""
+    src = event.get('original_path') or ''
+    dest = event.get('dest_path') or event.get('file_path') or ''
+    if not src or not dest or src == dest:
+        return False
+    return not os.path.exists(src)
+
+
 class EventPipeline:
     """
     Connects file monitoring to entropy analysis.
@@ -217,6 +226,24 @@ class EventPipeline:
         self.stats['total_received'] += 1
 
         evt_type = event['event_type']
+
+        # ── Reject fake renames ──
+        # The polling observer infers a rename from a matching inode.
+        # When files are deleted and recreated (lab reset, the
+        # defender's own restore), freed inodes are reused, so it
+        # reports renames between UNRELATED files ("Tax_Returns.pdf ->
+        # Notes.txt"). Trusting those moved entropy + backup history to
+        # the wrong file, so later restores wrote the wrong content. A
+        # genuine rename leaves the source path gone.
+        if evt_type == 'RENAMED' and not _is_genuine_rename(event):
+            event = dict(event)
+            event['event_type'] = 'CREATED'
+            event['original_path'] = event.get('dest_path') or \
+                event.get('file_path')
+            event['file_path'] = event['original_path']
+            event['dest_path'] = None
+            event['ext_changed'] = False
+            evt_type = 'CREATED'
 
         # ── CREATED and MODIFIED go straight to entropy ──
         if evt_type in ('CREATED', 'MODIFIED'):

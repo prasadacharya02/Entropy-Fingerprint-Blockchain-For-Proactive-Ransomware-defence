@@ -169,6 +169,12 @@ class BackupManager:
                 if blob not in referenced:
                     path = os.path.join(self.versions_dir, blob)
                     if os.path.isfile(path):
+                        try:
+                            from response.defender_actions import \
+                                get_registry
+                            get_registry().record_moved_away(path)
+                        except Exception:
+                            pass
                         os.unlink(path)
         except OSError:
             pass

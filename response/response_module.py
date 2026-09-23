@@ -387,16 +387,29 @@ class FileQuarantine:
                     self.quarantine_dir, quarantine_name
                 )
 
-                # Handle name conflicts
-                if os.path.exists(quarantine_path):
+                # Handle name conflicts. Evidence must NEVER be
+                # overwritten: a second quarantine of the same file in
+                # the same second used to reuse the timestamped name,
+                # silently replacing the first copy (and the replace
+                # looked like vault tampering to the monitor).
+                n = 0
+                while os.path.exists(quarantine_path):
+                    n += 1
                     ts = str(int(time.time()))
-                    quarantine_name = f"{short_hash}_{ts}_{original_name}"
+                    quarantine_name = (f"{short_hash}_{ts}_{n}_{original_name}"
+                                       if n > 1 else
+                                       f"{short_hash}_{ts}_{original_name}")
                     quarantine_path = os.path.join(
                         self.quarantine_dir, quarantine_name
                     )
 
-                # Move the file
+                # Move the file (never replaces an existing entry)
                 shutil.move(file_path, quarantine_path)
+                try:
+                    # Read-only evidence: the vault is for forensics.
+                    os.chmod(quarantine_path, 0o400)
+                except OSError:
+                    pass
                 result['quarantine_path'] = quarantine_path
 
                 log.info(f"[QUARANTINE] Moved: {file_path}")
@@ -441,6 +454,11 @@ class FileQuarantine:
                                if event else None),
             'process'        : (event.get('process')
                                if event else None),
+            'original_name'  : os.path.basename(original_path),
+            'event_type'     : (event.get('event_type')
+                               if event else None),
+            'terminated_process': (event.get('response_kill')
+                                   if event else None),
         }
 
         # The dashboard's /api/quarantine endpoint reads ".meta.json"
