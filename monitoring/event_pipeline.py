@@ -245,6 +245,10 @@ class EventPipeline:
             event['ext_changed'] = False
             evt_type = 'CREATED'
 
+        # Folders are not documents (a lab reset recreates them).
+        if os.path.isdir(event.get('file_path') or ''):
+            return
+
         # ── CREATED and MODIFIED go straight to entropy ──
         if evt_type in ('CREATED', 'MODIFIED'):
             self._enqueue_event(event)
