@@ -29,7 +29,10 @@ from response.response_module     import FileQuarantine, ProcessTerminator
 from response.backup_manager     import BackupManager
 from storage.hashing             import sha256_file
 from response.forensic_report    import generate_report
+from response.defender_actions   import get_registry as defender_actions
 from storage.database             import init_db as initialize_database
+from storage.database             import connect as connect_database
+from storage.database             import write_pipeline_heartbeat
 
 # Logger must exist before the optional DQN import: the fallback path logs
 # missing PyTorch/model errors during module import.
@@ -233,6 +236,13 @@ def execute_response(action: int,
     fname     = os.path.basename(file_path)
     outcome   = status
 
+    # ── Files inside the quarantine / backup stores are evidence the
+    # defender already holds. Tamper there (a DELETED event) is still
+    # reported and can kill the attacker, but the evidence itself must
+    # never be re-quarantined ("<hash>_<hash>_file") or "restored"
+    # under its quarantine name. ──
+    in_store = _is_defender_store(file_path)
+
     terminate_result  = None
     quarantine_result = None
     restore_result    = None
@@ -262,11 +272,23 @@ def execute_response(action: int,
         log.warning(f"  [THREAT] {fname} | H={entropy:.2f}")
         killed = _terminate_process(pid, procname, proc)
         terminate_result = "TERMINATED" if killed else "TERMINATE_REFUSED"
-        quarantine_result = _quarantine_file(file_path, event=event, action=action)
+        # Carry the kill into the vault record (the campaign's kill
+        # covers sweep files contained right after it).
+        event = dict(event, response_kill=_kill_record(
+            killed, pid, procname, proc))
+        if in_store:
+            quarantine_result = "ALREADY_IN_VAULT"
+            log.warning("  [ACTION] Evidence already inside the protected "
+                        "store — not re-quarantined")
+        else:
+            quarantine_result = _quarantine_file(file_path, event=event,
+                                                 action=action)
         log.warning(f"  [ACTION] Quarantine result: {quarantine_result}")
         outcome = quarantine_result if isinstance(quarantine_result, str) else status
         if config.DRY_RUN:
             outcome = "DRY_RUN_QUARANTINE"
+        elif in_store:
+            outcome = "TERMINATED" if killed else "TAMPER_LOGGED"
         elif not killed and quarantine_result != "QUARANTINED":
             outcome = "RESPONSE_PARTIAL"
 
@@ -275,7 +297,7 @@ def execute_response(action: int,
         # restore is safe. Live mode: only restore once the file is
         # contained (quarantined or already gone) so the attacker cannot
         # re-encrypt the restored copy in place.
-        if backup is not None:
+        if backup is not None and not in_store:
             contained = config.DRY_RUN or quarantine_result in (
                 "QUARANTINED", "FILE_ALREADY_MOVED", "DRY_RUN_QUARANTINE"
             )
@@ -288,6 +310,10 @@ def execute_response(action: int,
                     r = backup.restore(file_path, event=event)
                     if r.get("success") and r.get("restored"):
                         restore_result = "RESTORED"
+                        # Our own write — its filesystem echo must not
+                        # be judged as a new attack event.
+                        defender_actions().record_restore(
+                            file_path, r.get("sha256"))
                     elif r.get("success") and r.get("dry_run"):
                         restore_result = "DRY_RUN_RESTORE"
                     else:
@@ -311,6 +337,9 @@ def execute_response(action: int,
                     and not os.path.exists(original)):
                 try:
                     os.replace(file_path, original)
+                    defender_actions().record_moved_away(file_path)
+                    defender_actions().record_restore(
+                        original, sha256_file(original))
                     if backup is not None:
                         backup.transfer(file_path, original)
                     log.info(
@@ -371,7 +400,9 @@ def execute_response(action: int,
     # real content hash: a path hash or a missing file (e.g. the
     # already-deleted target of a defense-tamper event) must never be
     # published as a threat fingerprint.
-    if action == config.ACTION_TERMINATE_QUARANTINE and file_hash:
+    if (action == config.ACTION_TERMINATE_QUARANTINE and file_hash
+            and not in_store
+            and quarantine_result in ("QUARANTINED", "DRY_RUN_QUARANTINE")):
         # An injected exchange (benchmark / multi-node simulation) is an
         # explicit opt-in and always registers. The canonical store is
         # gated by config.EXCHANGE_ENABLED (tests / single-node offline).
@@ -399,6 +430,44 @@ def execute_response(action: int,
     # Return the detailed outcome (e.g. "DRY_RUN_QUARANTINE+DRY_RUN_RESTORE"),
     # not just the action label — callers and the dashboard rely on it.
     return outcome
+
+
+_LAST_KILL: dict = {}
+
+
+def _kill_record(killed: bool, pid, procname: str,
+                 process_info: dict | None) -> dict | None:
+    """Describe the process kill that belongs to this containment."""
+    now = time.time()
+    if killed and pid and not config.DRY_RUN:
+        _LAST_KILL.clear()
+        _LAST_KILL.update({
+            "pid": pid, "name": procname, "time": now,
+            "cmdline": (process_info or {}).get("cmdline"),
+        })
+        return {"pid": pid, "name": procname, "terminated": True,
+                "killed_at": datetime.fromtimestamp(now).isoformat(),
+                "scope": "this file"}
+    if _LAST_KILL and now - _LAST_KILL["time"] <= \
+            config.CAMPAIGN_WINDOW_SECONDS:
+        return {"pid": _LAST_KILL["pid"], "name": _LAST_KILL["name"],
+                "terminated": True,
+                "killed_at": datetime.fromtimestamp(
+                    _LAST_KILL["time"]).isoformat(),
+                "scope": "campaign"}
+    return None
+
+
+def _is_defender_store(path: str) -> bool:
+    """True for paths inside the quarantine vault or the backup store."""
+    if not path:
+        return False
+    target = os.path.abspath(path)
+    for root in (config.QUARANTINE_DIR, config.BACKUP_DIR):
+        root = os.path.abspath(root)
+        if target == root or target.startswith(root + os.sep):
+            return True
+    return False
 
 
 def _terminate_process(pid, procname: str, process_info: dict | None = None):
@@ -469,6 +538,7 @@ def _quarantine_file(file_path: str, event: dict | None = None,
         log.error(f"  [QUARANTINE] ❌ {result.get('message')}")
         return "FAILED"
 
+    defender_actions().record_moved_away(file_path)
     log.warning(f"  [QUARANTINE] ✅ → {os.path.basename(result.get('quarantine_path') or file_path)}")
     return "QUARANTINED"
 
@@ -511,10 +581,16 @@ class CampaignTracker:
         # (timestamp, path, event, action)
         self.entries: deque = deque()
         self.last_verified = None  # (timestamp, process dict)
+        # path -> time it was swept. In live mode a swept file is moved
+        # to quarantine, so it drops out naturally; in DRY-RUN nothing
+        # moves, and without this every later campaign event re-swept
+        # every earlier file (hundreds of duplicate SOC rows per attack).
+        self.swept: dict = {}
 
     def reset(self):
         self.entries.clear()
         self.last_verified = None
+        self.swept.clear()
 
     @staticmethod
     def _qualifies(event: dict) -> bool:
@@ -552,6 +628,8 @@ class CampaignTracker:
         window = config.CAMPAIGN_WINDOW_SECONDS
         while self.entries and now - self.entries[0][0] > window:
             self.entries.popleft()
+        for p in [p for p, t in self.swept.items() if now - t > window]:
+            del self.swept[p]
         if self.last_verified and now - self.last_verified[0] > window:
             self.last_verified = None
 
@@ -579,9 +657,12 @@ class CampaignTracker:
         for (_t, p, e, a) in self.entries:
             if p == path or p in seen or a < config.ACTION_ALERT:
                 continue
+            if p in self.swept:
+                continue  # already contained during this campaign
             target = e.get("file_path") or p
             if os.path.exists(target):
                 seen.add(p)
+                self.swept[p] = now
                 sweep.append(dict(e))
 
         kill_override = (None if verified is not None
@@ -921,7 +1002,42 @@ class PipelineRunner:
         # Start the event pipeline
         self.pipeline.start()
 
+        # ── Heartbeat for the SOC dashboard (separate process) ──
+        self._started_at = time.time()
+        self._heartbeat_running = True
+        Thread(target=self._heartbeat_loop, daemon=True,
+               name="PipelineHeartbeat").start()
+
         log.info("[RUNNER] Pipeline running — waiting for events...")
+
+    def _heartbeat_loop(self, interval: float = 2.0):
+        """Publish liveness + watch folders so the dashboard can show
+        whether detection is really running and what it watches."""
+        conn = None
+        while getattr(self, "_heartbeat_running", False):
+            try:
+                if conn is None:
+                    conn = connect_database()
+                pstats = {}
+                try:
+                    pstats = self.pipeline.get_stats()
+                except Exception:
+                    pass
+                write_pipeline_heartbeat(
+                    conn,
+                    started_at=self._started_at,
+                    pid=os.getpid(),
+                    watch_folders=config.WATCH_FOLDERS,
+                    dry_run=bool(config.DRY_RUN),
+                    engine=self.engine.engine_name(),
+                    stats={**self.stats,
+                           "received": pstats.get("total_received", 0),
+                           "analyzed": pstats.get("total_analyzed", 0)},
+                )
+            except Exception as e:
+                log.debug(f"[RUNNER] Heartbeat write failed: {e}")
+                conn = None
+            time.sleep(interval)
 
     def _on_analyzed_event(self, event: dict):
         """
@@ -930,6 +1046,25 @@ class PipelineRunner:
         This is where detection + response happens.
         """
         self.stats["total"] += 1
+
+        # ── Drop echoes of the defender's own actions ──
+        # Restoring a clean copy, renaming a file back and moving a file
+        # into quarantine all produce filesystem events. Judging those
+        # as attacks quarantined CLEAN restored files and sometimes lost
+        # a file. Only genuinely new activity reaches the decision.
+        echo = self._defender_echo(event)
+        if echo:
+            log.info(f"  [SELF]   {os.path.basename(event.get('file_path',''))}"
+                     f" — {echo} (defender's own action, not re-analysed)")
+            try:
+                if event.get("event_type") in ("CREATED", "MODIFIED",
+                                               "RENAMED"):
+                    # Keep the clean content as the newest baseline.
+                    self.backup.capture(event["file_path"], event=event,
+                                        strict=True)
+            except Exception:
+                pass
+            return
 
         # ── Capture the current file state for recovery ──
         # Additive (reads the file, writes only to backup_storage/),
@@ -946,7 +1081,8 @@ class PipelineRunner:
             # rename-based attacks are quarantined but never recovered.
             if (event.get("event_type") == "RENAMED"
                     and original_path
-                    and original_path != file_path):
+                    and original_path != file_path
+                    and not os.path.exists(original_path)):
                 try:
                     if self.backup.transfer(original_path, file_path):
                         log.info(
@@ -1028,7 +1164,15 @@ class PipelineRunner:
         # whatever is still encrypted.
         if (decision.get("campaign")
                 and action >= config.ACTION_TERMINATE):
-            self._post_kill_verification()
+            # Dry-run leaves every file in place, so rescanning after
+            # each campaign event would re-report the same files.
+            # Run the scan once per campaign window there.
+            now = time.time()
+            last = getattr(self, "_last_postkill", 0.0)
+            if (not config.DRY_RUN
+                    or now - last > config.CAMPAIGN_WINDOW_SECONDS):
+                self._last_postkill = now
+                self._post_kill_verification()
 
         # ── Mirror the rename-back in the entropy history ──
         # execute_response may have moved a renamed file back to its
@@ -1053,6 +1197,31 @@ class PipelineRunner:
         elif action == config.ACTION_TERMINATE_QUARANTINE:
             self.stats["terminated"]  += 1
             self.stats["quarantined"] += 1
+
+    @staticmethod
+    def _defender_echo(event: dict) -> str | None:
+        """Name the defender action that caused *event*, or None."""
+        reg = defender_actions()
+        etype = event.get("event_type")
+        path = event.get("file_path") or ""
+        src = event.get("original_path") or ""
+        base = os.path.basename(src)
+        if etype == "RENAMED" and base.startswith(".restore_tmp."):
+            return "restore write"
+        if etype in ("CREATED", "MODIFIED", "RENAMED") and \
+                reg.is_restore_echo(path, event.get("file_hash")):
+            return "restored clean copy"
+        if etype == "DELETED" and reg.is_own_removal(path):
+            return "moved to quarantine / renamed back"
+        if etype == "DELETED" and _is_defender_store(path) and \
+                reg.is_own_removal(path):
+            return "vault housekeeping"
+        # The entropy reading of a just-restored file is momentarily 0.0
+        # while it is being replaced; never judge that transient state.
+        if etype in ("CREATED", "MODIFIED") and reg.recently_restored(path) \
+                and not (event.get("entropy_overall") or 0.0):
+            return "restore in progress"
+        return None
 
     def _post_kill_verification(self):
         """Walk the protected estate once after a confirmed campaign kill.
@@ -1159,6 +1328,7 @@ class PipelineRunner:
             f"{repaired} file(s) repaired")
 
     def stop(self):
+        self._heartbeat_running = False
         self.pipeline.stop()
         # Give queued ledger writes a chance to complete before the runner
         # exits. This prevents daemon-thread writes from being silently lost.

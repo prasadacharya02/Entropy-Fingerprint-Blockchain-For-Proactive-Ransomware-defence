@@ -121,6 +121,15 @@ class AnalyzedEventStore:
 # The main connector between monitor and entropy calculator.
 # ============================================================
 
+def _is_genuine_rename(event: dict) -> bool:
+    """True unless the 'rename' source still exists (inode reuse)."""
+    src = event.get('original_path') or ''
+    dest = event.get('dest_path') or event.get('file_path') or ''
+    if not src or not dest or src == dest:
+        return False
+    return not os.path.exists(src)
+
+
 class EventPipeline:
     """
     Connects file monitoring to entropy analysis.
@@ -218,6 +227,28 @@ class EventPipeline:
 
         evt_type = event['event_type']
 
+        # ── Reject fake renames ──
+        # The polling observer infers a rename from a matching inode.
+        # When files are deleted and recreated (lab reset, the
+        # defender's own restore), freed inodes are reused, so it
+        # reports renames between UNRELATED files ("Tax_Returns.pdf ->
+        # Notes.txt"). Trusting those moved entropy + backup history to
+        # the wrong file, so later restores wrote the wrong content. A
+        # genuine rename leaves the source path gone.
+        if evt_type == 'RENAMED' and not _is_genuine_rename(event):
+            event = dict(event)
+            event['event_type'] = 'CREATED'
+            event['original_path'] = event.get('dest_path') or \
+                event.get('file_path')
+            event['file_path'] = event['original_path']
+            event['dest_path'] = None
+            event['ext_changed'] = False
+            evt_type = 'CREATED'
+
+        # Folders are not documents (a lab reset recreates them).
+        if os.path.isdir(event.get('file_path') or ''):
+            return
+
         # ── CREATED and MODIFIED go straight to entropy ──
         if evt_type in ('CREATED', 'MODIFIED'):
             self._enqueue_event(event)
@@ -285,11 +316,15 @@ class EventPipeline:
                 self.stats['total_skipped'] += 1
                 return
 
-        # ── Skip tiny files ──
+        # ── Tiny files: too small for a meaningful entropy score, but
+        #    the change itself must still reach the SOC timeline (a new
+        #    empty/short note used to vanish without a trace). ──
         try:
             size = os.path.getsize(file_path)
             if size < 10:
                 self.stats['total_skipped'] += 1
+                self._store_without_entropy(
+                    event, reason='File too small for entropy analysis')
                 return
         except Exception:
             self.stats['total_skipped'] += 1
@@ -314,7 +349,7 @@ class EventPipeline:
 
         self._log_analyzed_event(enriched_event)
 
-    def _store_without_entropy(self, event):
+    def _store_without_entropy(self, event, reason='File deleted or renamed'):
         """
         Store a file event that doesn't need entropy analysis.
         (DELETED events, or RENAMED where dest is gone)
@@ -326,6 +361,7 @@ class EventPipeline:
             'event_type'      : event['event_type'],
             'file_path'       : event['file_path'],
             'dest_path'       : event.get('dest_path'),
+            'original_path'   : event.get('original_path'),
             'file_extension'  : event['file_extension'],
             'events_per_sec'  : event['events_per_sec'],
             'events_in_window': event['events_in_window'],
@@ -338,7 +374,7 @@ class EventPipeline:
             'file_hash'       : None,
             'threat_score'    : 0.0,
             'is_suspicious'   : event.get('ext_changed', False),
-            'reason'          : 'File deleted or renamed',
+            'reason'          : reason,
             'indicators'      : [],
 
             # Speed flag

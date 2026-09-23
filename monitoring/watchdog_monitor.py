@@ -294,6 +294,8 @@ class EntropyEventHandler(FileSystemEventHandler):
             return True
         fn = os.path.basename(file_path)
         if fn.startswith('~') or fn.startswith('.'):
+            # Hidden/temp names (incl. the defender's own
+            # .restore_tmp.* files) are not user documents.
             return True
         if config.LOG_DIR.lower() in p:
             return True
@@ -311,6 +313,14 @@ class EntropyEventHandler(FileSystemEventHandler):
             name = os.path.basename(file_path)
             if name == "manifest.json" or ".tmp" in name:
                 return True
+            # The backup store evicts old version blobs itself
+            # (bounded history); those deletions are housekeeping.
+            try:
+                from response.defender_actions import get_registry
+                if get_registry().is_own_removal(file_path):
+                    return True
+            except Exception:
+                pass
         return False
     
     def _check_ext_changed(self, src_path, dest_path):

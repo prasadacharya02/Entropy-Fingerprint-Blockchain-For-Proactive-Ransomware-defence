@@ -18,6 +18,7 @@ sys.path.insert(0, BASE_DIR)
 # ── Import config and modules ───────────
 import config
 from storage.database import connect, init_db as initialize_database
+from storage.database import read_pipeline_heartbeat
 from blockchain.connector import BlockchainConnector
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
@@ -92,6 +93,49 @@ def platform():
         "is_blockchain": status.get("is_blockchain", False),
         "positioning": "Purple-team range for SOC training — not an EDR replacement",
     })
+
+
+# A heartbeat older than this means the detection pipeline is not running.
+PIPELINE_STALE_SECONDS = 8.0
+
+
+def pipeline_status() -> dict:
+    """Liveness + watch folders of the detection pipeline process."""
+    try:
+        db = get_db()
+        hb = read_pipeline_heartbeat(db)
+        db.close()
+    except Exception:
+        log.exception("Pipeline status read failed")
+        hb = None
+    victim = os.path.abspath(config.VICTIM_USER_FILES)
+    if not hb:
+        return {
+            "online": False, "age_seconds": None, "watch_folders": [],
+            "watching_victim": False, "dry_run": None, "engine": None,
+            "stats": {}, "victim_folder": victim,
+        }
+    age = max(0.0, time.time() - float(hb["heartbeat"]))
+    folders = [os.path.abspath(f) for f in hb["watch_folders"]]
+    watching_victim = any(
+        victim == f or victim.startswith(f + os.sep) for f in folders
+    )
+    return {
+        "online": age <= PIPELINE_STALE_SECONDS,
+        "age_seconds": round(age, 1),
+        "pid": hb.get("pid"),
+        "watch_folders": folders,
+        "watching_victim": watching_victim,
+        "dry_run": hb["dry_run"],
+        "engine": hb.get("engine"),
+        "stats": hb.get("stats") or {},
+        "victim_folder": victim,
+    }
+
+
+@app.route("/api/pipeline")
+def pipeline():
+    return jsonify(pipeline_status())
 
 
 @app.route("/api/health")
@@ -401,7 +445,8 @@ def push_updates():
                 socketio.emit("live_update", {
                     "total"   : stat["total"]   or 0,
                     "threats" : stat["threats"] or 0,
-                    "time"    : datetime.now().strftime("%H:%M:%S")
+                    "time"    : datetime.now().strftime("%H:%M:%S"),
+                    "pipeline": pipeline_status(),
                 })
         except Exception:
             log.exception("Live update push failed")

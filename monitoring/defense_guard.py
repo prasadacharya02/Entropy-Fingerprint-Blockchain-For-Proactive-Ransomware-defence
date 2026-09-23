@@ -142,7 +142,10 @@ def collect_threat_flags(event: dict,
     # 2. Protected-store tamper: deletion inside the backup/quarantine
     # stores means the attacker is destroying recovery capability.
     if event_type == "DELETED" and file_path and \
-            is_protected_path(file_path, protected_roots):
+            is_protected_path(file_path, protected_roots) and \
+            not os.path.exists(file_path):
+        # (A path that still exists was replaced, not destroyed — e.g.
+        # the store's own atomic rewrite; that is not tampering.)
         flags["defense_tamper"] = True
         flags["defense_tamper_evidence"].append(
             f"deletion of protected path: "

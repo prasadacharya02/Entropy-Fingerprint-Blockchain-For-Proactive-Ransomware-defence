@@ -26,15 +26,50 @@ SERVICES = (
 )
 
 
-def _env() -> dict[str, str]:
+VICTIM_FOLDER = "victim_server/user_files"
+
+
+def _set_default(env: dict[str, str], key: str, value: str) -> None:
+    """Like setdefault, but an EMPTY value also counts as unset.
+
+    A .env copied from .env.example contains lines such as
+    ``ENTROPY_WATCH_FOLDERS=`` — python-dotenv exports those as empty
+    strings, and plain ``setdefault`` would then keep the empty value.
+    """
+    if not (env.get(key) or "").strip():
+        env[key] = value
+
+
+def _env(dry_run: bool | None = None) -> dict[str, str]:
     env = os.environ.copy()
-    env.setdefault("ENTROPY_WATCH_FOLDERS", "victim_server/user_files")
-    env.setdefault("ENTROPY_DASHBOARD_HOST", "0.0.0.0")
-    env.setdefault("ENTROPY_VICTIM_HOST", "0.0.0.0")
-    env.setdefault("ENTROPY_DRY_RUN", "false")
-    env.setdefault("ENTROPY_CONTROL_TOKEN", "entropy-lab")
-    env.setdefault("ENTROPY_BLOCKCHAIN_FALLBACK", "true")
-    env.setdefault("PYTHONUNBUFFERED", "1")
+    _set_default(env, "ENTROPY_DASHBOARD_HOST", "0.0.0.0")
+    _set_default(env, "ENTROPY_VICTIM_HOST", "0.0.0.0")
+    # The lab is the LIVE demo: kill the attacker, move the file to the
+    # quarantine vault, restore the clean copy. A .env copied from an
+    # older .env.example set ENTROPY_DRY_RUN=true, which silently
+    # turned all of that into log lines. Dry-run is now an explicit
+    # opt-in: `python lab.py --dry-run`.
+    if dry_run is not None:
+        env["ENTROPY_DRY_RUN"] = "true" if dry_run else "false"
+    _set_default(env, "ENTROPY_DRY_RUN", "false")
+    _set_default(env, "ENTROPY_CONTROL_TOKEN", "entropy-lab")
+    _set_default(env, "ENTROPY_BLOCKCHAIN_FALLBACK", "true")
+    _set_default(env, "PYTHONUNBUFFERED", "1")
+
+    # The lab exists to defend the victim estate: it must ALWAYS be
+    # watched, whatever else the operator adds. Without this, an empty
+    # or unrelated ENTROPY_WATCH_FOLDERS (e.g. from .env) made the
+    # pipeline watch data/testing only, so the SOC dashboard never saw
+    # a single victim-folder change or attack.
+    folders = [
+        part.strip()
+        for part in (env.get("ENTROPY_WATCH_FOLDERS") or "").split(",")
+        if part.strip()
+    ]
+    victim_abs = (ROOT / VICTIM_FOLDER).resolve()
+    if not any((ROOT / f).resolve() == victim_abs for f in folders):
+        folders.insert(0, VICTIM_FOLDER)
+    env["ENTROPY_WATCH_FOLDERS"] = ",".join(folders)
     return env
 
 
@@ -53,7 +88,8 @@ def _ensure_quarantine():
     print(f"[install] Vault credentials: {config.VAULT_USER} / PIN {config.VAULT_PIN}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     _ensure_quarantine()
 
     fixtures = ROOT / "victim_server" / "create_fake_files.py"
@@ -69,14 +105,17 @@ def main() -> int:
     print("  SOC Dashboard   : http://127.0.0.1:5000  (real-time feed)")
     print("  Victim PC       : http://127.0.0.1:5001  (neutral explorer)")
     print("  Attacker Console: http://127.0.0.1:8001  (launch attacks)")
-    print("  Watching        : victim_server/user_files")
+    env = _env(dry_run="--dry-run" in argv)
+    dry_run = env["ENTROPY_DRY_RUN"].strip().lower() in {"1", "true", "yes", "on"}
+    print(f"  Watching        : {env['ENTROPY_WATCH_FOLDERS']}")
     print("  Quarantine      : quarantine_storage/ (install-time, PIN locked)")
     print("  Backup Vault    : backup_storage/ (versioned clean copies)")
-    print("  Dry-run         : OFF - real kill+quarantine+restore active")
+    print("  Dry-run         : " + (
+        "ON - detections are logged, files are NOT moved (ENTROPY_DRY_RUN)"
+        if dry_run else "OFF - real kill+quarantine+restore active"))
     print("  Blockchain      : Local ledger fallback (Ganache optional)")
     print("=" * 70)
 
-    env = _env()
     processes: list[subprocess.Popen] = []
     try:
         for name, command in SERVICES:

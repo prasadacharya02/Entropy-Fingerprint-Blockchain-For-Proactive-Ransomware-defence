@@ -99,6 +99,15 @@
     .btn-primary:hover { background: #005a9e; }
     .btn-secondary { background: #f0f0f0; color: #333; border: 1px solid #ddd !important; }
     .vault-err { color: var(--red); font-size: 12px; min-height: 16px; text-align: center; font-weight: 600; }
+    /* Quarantine vault view */
+    .q-banner { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; padding: 12px 14px; margin-bottom: 12px; border: 1px solid #cfe6cf; background: #f3faf3; border-radius: 8px; font-size: 13px; color: #1d4d1d; }
+    .q-banner b { font-size: 15px; }
+    .q-banner .q-path { color: #5b6b5b; font-family: Consolas, monospace; font-size: 12px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+    .pill.killed { background: #fde7e9; color: #a4262c; }
+    .pill.contained { background: #e6f4ea; color: #0b6a0b; }
+    .pill.ro { background: #eef1f5; color: #4a5568; }
+    .q-sub { color: var(--muted); font-size: 11px; font-family: Consolas, monospace; }
   </style>
 </head>
 <body>
@@ -203,7 +212,7 @@
         <input id="vaultUser" value="victim_user" autocomplete="off" />
 
         <label>PIN / Password</label>
-        <input id="vaultPin" type="password" placeholder="Enter PIN"
+        <input id="vaultPin" type="password" inputmode="numeric" placeholder="Enter vault PIN"
                autocomplete="off" onkeydown="if(event.key==='Enter') vaultLogin()" />
 
         <div id="vaultErr" class="vault-err"></div>
@@ -381,7 +390,44 @@
     return "📄";
   }
 
+  function renderQuarantine(files) {
+    const killed = {};
+    files.forEach(f => { if (f.process_killed && f.killed_pid) killed[f.killed_pid] = f.killed_name; });
+    const killedTxt = Object.keys(killed).length
+      ? Object.entries(killed).map(([pid, n]) => `PID ${pid} (${escapeHtml(n || "?")})`).join(", ")
+      : "none recorded";
+    const rows = files.map(f => `
+      <tr onclick="previewFile('Quarantine', \`${f.name.replace(/`/g, "")}\`)">
+        <td><div class="file-name">
+          <div class="f-ico">🦠</div>
+          <div>${escapeHtml(f.original_name)}<div class="q-sub">${escapeHtml(f.name)}</div></div>
+        </div></td>
+        <td>${escapeHtml(f.from_folder || "-")}</td>
+        <td>${escapeHtml(f.quarantined_at || f.modified || "-")}</td>
+        <td>${f.process_killed
+              ? `<span class="pill killed">KILLED PID ${f.killed_pid}</span>`
+              : `<span class="pill contained">CONTAINED</span>`}
+            ${f.read_only ? '<span class="pill ro">READ-ONLY</span>' : ""}</td>
+        <td>${f.size || "-"}</td>
+      </tr>`).join("");
+    document.getElementById("content").innerHTML = `
+      <div class="q-banner">
+        <b>🛡️ ${files.length} file${files.length === 1 ? "" : "s"} quarantined</b>
+        <span>Ransomware process killed: <b>${killedTxt}</b></span>
+        <span class="q-path">Clean copies were restored to their original folders.</span>
+      </div>
+      <table class="file-table">
+        <thead><tr>
+          <th style="width:38%">Original file</th><th style="width:14%">From</th>
+          <th style="width:18%">Quarantined</th><th style="width:20%">Response</th>
+          <th style="width:10%">Size</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
   function renderFiles(files) {
+    if (currentFolder === "Quarantine" && files.length) { renderQuarantine(files); return; }
     if (!files.length) {
       document.getElementById("content").innerHTML = `
         <div class="empty">
@@ -419,7 +465,7 @@
   function filterFiles() {
     if (currentFolder == null) return;
     const q = (document.getElementById("searchBox").value || "").toLowerCase();
-    const filtered = fileCache.filter(f => (f.name || "").toLowerCase().includes(q));
+    const filtered = fileCache.filter(f => ((f.name || "") + " " + (f.original_name || "")).toLowerCase().includes(q));
     renderFiles(filtered);
   }
 
@@ -471,10 +517,12 @@
         vaultUnlocked = true;
         updateVaultUI();
         hideVaultLogin();
-        if (currentFolder === "Quarantine") await openFolder("Quarantine");
-        else await refreshStatus();
+        // Unlocking the vault always opens it.
+        await openFolder("Quarantine");
       } else {
-        errEl.textContent = data.message || "Access denied.";
+        errEl.textContent = "Wrong PIN — access denied.";
+        const pinEl = document.getElementById("vaultPin");
+        pinEl.value = ""; pinEl.focus();
       }
     } catch { errEl.textContent = "Login failed. Try again."; }
   }
@@ -506,9 +554,11 @@
   setInterval(tickClock, 1000);
   setInterval(refreshStatus, 3000);
   setInterval(() => {
+    // Don't re-render (or re-open the login prompt) under an open dialog.
+    if (document.querySelector(".modal-bg.show")) return;
     if (currentFolder) openFolder(currentFolder);
     else showHome();
-  }, 5000);
+  }, 3000);
 </script>
 </body>
 </html>

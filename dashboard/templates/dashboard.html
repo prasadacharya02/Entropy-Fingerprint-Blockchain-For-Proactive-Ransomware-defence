@@ -222,6 +222,19 @@ body {
 .metric-val.danger { color: var(--danger); }
 .metric-sub { font-size: 11px; color: var(--text-dim); margin-top: 10px; font-family: 'Roboto Mono', monospace; }
 
+/* PIPELINE STATUS BANNER */
+.pipe-banner { display: flex; align-items: center; gap: 14px; padding: 12px 18px; margin-bottom: 20px; border: 1px solid var(--border); background: var(--panel); font-size: 13px; letter-spacing: 1px; }
+.pipe-banner .pb-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-mute); flex: none; }
+.pipe-banner.ok { border-color: var(--accent-dim); }
+.pipe-banner.ok .pb-dot { background: var(--accent); box-shadow: 0 0 8px rgba(74,222,128,.8); animation: pulse 1.4s infinite; }
+.pipe-banner.warn { border-color: var(--warning); }
+.pipe-banner.warn .pb-dot { background: var(--warning); }
+.pipe-banner.err { border-color: var(--danger); }
+.pipe-banner.err .pb-dot { background: var(--danger); }
+.pipe-banner .pb-title { font-weight: 700; color: var(--text); white-space: nowrap; }
+.pipe-banner .pb-detail { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.pipe-banner .pb-counts { color: var(--text-mute); white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
 /* GRIDS */
 .grid-2 { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; margin-bottom: 20px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
@@ -385,6 +398,15 @@ body {
     <div class="page-sub">Real-time telemetry from ransomware defense layers</div>
   </div>
 
+  <!-- DETECTION PIPELINE STATUS (is the monitor really running, and
+       is it watching the victim folder?) -->
+  <div class="pipe-banner" id="pipe-banner">
+    <span class="pb-dot"></span>
+    <span class="pb-title" id="pb-title">CHECKING DETECTION PIPELINE…</span>
+    <span class="pb-detail" id="pb-detail"></span>
+    <span class="pb-counts" id="pb-counts"></span>
+  </div>
+
   <!-- THREAT LEVEL BAR -->
   <div class="threat-level">
     <div class="tl-label">THREAT LEVEL</div>
@@ -534,8 +556,11 @@ body {
 
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/socket.io/socket.io.js"></script>
+<!-- Served locally: the dashboard must work offline / behind a firewall.
+     (/socket.io/socket.io.js is NOT served by python-socketio 5.x — it
+     returned HTTP 400, so `io` was undefined and the live feed died.) -->
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/socket.io.min.js') }}"></script>
 <script>
 const START_TIME = Date.now();
 
@@ -576,8 +601,13 @@ function eventDesc(e) {
   return base;
 }
 
-let chart;
+let chart = null;
 function initChart() {
+  if (typeof Chart === 'undefined') {
+    // Never let a missing chart library stop the live feed.
+    console.warn('Chart.js unavailable — entropy graph disabled');
+    return;
+  }
   const ctx = document.getElementById('chart').getContext('2d');
   chart = new Chart(ctx, {
     type: 'line',
@@ -779,6 +809,7 @@ async function loadQuarantine() {
 }
 
 async function loadChart() {
+  if (!chart) return;
   try {
     const r = await fetch('/api/entropy');
     const data = await r.json();
@@ -791,8 +822,49 @@ async function loadChart() {
   } catch(e) {}
 }
 
+function renderPipeline(p) {
+  const banner = document.getElementById('pipe-banner');
+  const title = document.getElementById('pb-title');
+  const detail = document.getElementById('pb-detail');
+  const counts = document.getElementById('pb-counts');
+  if (!banner || !p) return;
+  const folders = (p.watch_folders || []).join(', ');
+  if (!p.online) {
+    banner.className = 'pipe-banner err';
+    title.textContent = 'DETECTION PIPELINE OFFLINE';
+    detail.textContent = p.age_seconds == null
+      ? 'No monitor has reported yet — start the lab with: python lab.py'
+      : `Last heartbeat ${p.age_seconds}s ago — the monitor process stopped. Restart: python lab.py`;
+    counts.textContent = '';
+    return;
+  }
+  const s = p.stats || {};
+  counts.textContent = `SEEN ${s.received || 0} · ANALYZED ${s.analyzed || 0} · ENGINE ${(p.engine || 'rules').toUpperCase()}`;
+  if (!p.watching_victim) {
+    banner.className = 'pipe-banner warn';
+    title.textContent = 'NOT WATCHING VICTIM FOLDER';
+    detail.textContent = `Monitoring ${folders || '(nothing)'} — victim files at ${p.victim_folder} are NOT watched. Check ENTROPY_WATCH_FOLDERS.`;
+    return;
+  }
+  banner.className = p.dry_run ? 'pipe-banner warn' : 'pipe-banner ok';
+  title.textContent = p.dry_run ? 'MONITORING · DRY-RUN' : 'MONITORING LIVE';
+  detail.textContent = (p.dry_run
+    ? 'Detections are logged but files are NOT quarantined (ENTROPY_DRY_RUN=true). Watching: '
+    : 'Watching: ') + folders;
+}
+
+async function loadPipeline() {
+  try {
+    const r = await fetch('/api/pipeline');
+    renderPipeline(await r.json());
+  } catch(e) {
+    renderPipeline({ online: false, age_seconds: null });
+  }
+}
+
 async function loadAll() {
   await Promise.all([
+    loadPipeline(),
     loadStats(),
     loadEvents(),
     loadDQN(),
@@ -817,7 +889,11 @@ setInterval(loadAll, 2000);
 // feed, entropy graph, and threat state the moment they happen —
 // the polling loops above are just a resilience fallback.
 // ────────────────────────────────────────────────────────────
-const socket = io({ transports: ['websocket', 'polling'] });
+// If the socket.io client failed to load, the 1–2s polling above
+// still keeps every panel live — never throw here.
+const socket = (typeof io === 'function')
+  ? io({ transports: ['websocket', 'polling'] })
+  : { on() {} };
 
 function eventRowHtml(e, live) {
   return `<div class="event-row${live ? ' live' : ''}">
@@ -869,6 +945,7 @@ socket.on('live_update', (d) => {
   // Counter heartbeat; full stat refresh is cheap and keeps all
   // panels (metrics, distribution, threat level) in lock-step.
   loadStats();
+  if (d && d.pipeline) renderPipeline(d.pipeline);
 });
 </script>
 </body>

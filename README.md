@@ -145,6 +145,12 @@ python -m unittest discover -s tests  # 126 tests, 0 fail
 
 ## 🔧 Troubleshooting
 
+- **SOC dashboard shows no events** - look at the status banner at the top of the SOC page:
+  - `DETECTION PIPELINE OFFLINE` → the monitor is not running; start everything with `python lab.py`
+  - `NOT WATCHING VICTIM FOLDER` → `ENTROPY_WATCH_FOLDERS` points elsewhere (`lab.py` now always adds `victim_server/user_files`)
+  - `MONITORING · DRY-RUN` → `ENTROPY_DRY_RUN=true` (e.g. from a `.env` copied from `.env.example`): attacks are detected and logged, but no kill/quarantine happens
+  - `curl http://127.0.0.1:5000/api/pipeline` shows the same status as JSON
+
 - `Ganache not reachable` - OK, fallback ledger active (set `ENTROPY_BLOCKCHAIN_FALLBACK=true` default)
 - `DQN unavailable` - OK, rule engine default (install torch for DQN)
 - `.venv` missing - Recreate: `python -m venv .venv && pip install -r requirements.txt`
