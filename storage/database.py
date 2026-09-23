@@ -93,3 +93,68 @@ def init_db(path: str | None = None) -> sqlite3.Connection:
     )
     connection.commit()
     return connection
+
+
+# ── Pipeline heartbeat ──────────────────────────────────────
+# The detection pipeline and the SOC dashboard are separate processes
+# that only share this database. The pipeline writes a heartbeat row
+# (what it watches, dry-run state, counters) every couple of seconds so
+# the dashboard can show whether detection is actually running and
+# which folder it is looking at — instead of silently showing nothing.
+
+_PIPELINE_STATUS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS pipeline_status (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),
+    heartbeat      REAL NOT NULL,
+    started_at     REAL,
+    pid            INTEGER,
+    watch_folders  TEXT,
+    dry_run        INTEGER,
+    engine         TEXT,
+    stats          TEXT
+)
+"""
+
+
+def write_pipeline_heartbeat(connection: sqlite3.Connection, *,
+                             started_at: float, pid: int,
+                             watch_folders: list, dry_run: bool,
+                             engine: str, stats: dict) -> None:
+    """Upsert the single pipeline heartbeat row."""
+    import json
+    import time
+
+    connection.execute(_PIPELINE_STATUS_SCHEMA)
+    connection.execute(
+        """
+        INSERT INTO pipeline_status
+            (id, heartbeat, started_at, pid, watch_folders, dry_run,
+             engine, stats)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            heartbeat=excluded.heartbeat, started_at=excluded.started_at,
+            pid=excluded.pid, watch_folders=excluded.watch_folders,
+            dry_run=excluded.dry_run, engine=excluded.engine,
+            stats=excluded.stats
+        """,
+        (time.time(), started_at, pid, json.dumps(list(watch_folders)),
+         1 if dry_run else 0, engine, json.dumps(stats or {})),
+    )
+    connection.commit()
+
+
+def read_pipeline_heartbeat(connection: sqlite3.Connection) -> dict | None:
+    """Return the last pipeline heartbeat, or None if it never ran."""
+    import json
+
+    connection.execute(_PIPELINE_STATUS_SCHEMA)
+    row = connection.execute(
+        "SELECT * FROM pipeline_status WHERE id = 1"
+    ).fetchone()
+    if row is None:
+        return None
+    data = dict(row)
+    data["watch_folders"] = json.loads(data.get("watch_folders") or "[]")
+    data["stats"] = json.loads(data.get("stats") or "{}")
+    data["dry_run"] = bool(data.get("dry_run"))
+    return data

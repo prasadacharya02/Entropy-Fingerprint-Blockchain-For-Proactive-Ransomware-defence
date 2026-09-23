@@ -30,6 +30,8 @@ from response.backup_manager     import BackupManager
 from storage.hashing             import sha256_file
 from response.forensic_report    import generate_report
 from storage.database             import init_db as initialize_database
+from storage.database             import connect as connect_database
+from storage.database             import write_pipeline_heartbeat
 
 # Logger must exist before the optional DQN import: the fallback path logs
 # missing PyTorch/model errors during module import.
@@ -511,10 +513,16 @@ class CampaignTracker:
         # (timestamp, path, event, action)
         self.entries: deque = deque()
         self.last_verified = None  # (timestamp, process dict)
+        # path -> time it was swept. In live mode a swept file is moved
+        # to quarantine, so it drops out naturally; in DRY-RUN nothing
+        # moves, and without this every later campaign event re-swept
+        # every earlier file (hundreds of duplicate SOC rows per attack).
+        self.swept: dict = {}
 
     def reset(self):
         self.entries.clear()
         self.last_verified = None
+        self.swept.clear()
 
     @staticmethod
     def _qualifies(event: dict) -> bool:
@@ -552,6 +560,8 @@ class CampaignTracker:
         window = config.CAMPAIGN_WINDOW_SECONDS
         while self.entries and now - self.entries[0][0] > window:
             self.entries.popleft()
+        for p in [p for p, t in self.swept.items() if now - t > window]:
+            del self.swept[p]
         if self.last_verified and now - self.last_verified[0] > window:
             self.last_verified = None
 
@@ -579,9 +589,12 @@ class CampaignTracker:
         for (_t, p, e, a) in self.entries:
             if p == path or p in seen or a < config.ACTION_ALERT:
                 continue
+            if p in self.swept:
+                continue  # already contained during this campaign
             target = e.get("file_path") or p
             if os.path.exists(target):
                 seen.add(p)
+                self.swept[p] = now
                 sweep.append(dict(e))
 
         kill_override = (None if verified is not None
@@ -921,7 +934,42 @@ class PipelineRunner:
         # Start the event pipeline
         self.pipeline.start()
 
+        # ── Heartbeat for the SOC dashboard (separate process) ──
+        self._started_at = time.time()
+        self._heartbeat_running = True
+        Thread(target=self._heartbeat_loop, daemon=True,
+               name="PipelineHeartbeat").start()
+
         log.info("[RUNNER] Pipeline running — waiting for events...")
+
+    def _heartbeat_loop(self, interval: float = 2.0):
+        """Publish liveness + watch folders so the dashboard can show
+        whether detection is really running and what it watches."""
+        conn = None
+        while getattr(self, "_heartbeat_running", False):
+            try:
+                if conn is None:
+                    conn = connect_database()
+                pstats = {}
+                try:
+                    pstats = self.pipeline.get_stats()
+                except Exception:
+                    pass
+                write_pipeline_heartbeat(
+                    conn,
+                    started_at=self._started_at,
+                    pid=os.getpid(),
+                    watch_folders=config.WATCH_FOLDERS,
+                    dry_run=bool(config.DRY_RUN),
+                    engine=self.engine.engine_name(),
+                    stats={**self.stats,
+                           "received": pstats.get("total_received", 0),
+                           "analyzed": pstats.get("total_analyzed", 0)},
+                )
+            except Exception as e:
+                log.debug(f"[RUNNER] Heartbeat write failed: {e}")
+                conn = None
+            time.sleep(interval)
 
     def _on_analyzed_event(self, event: dict):
         """
@@ -1028,7 +1076,15 @@ class PipelineRunner:
         # whatever is still encrypted.
         if (decision.get("campaign")
                 and action >= config.ACTION_TERMINATE):
-            self._post_kill_verification()
+            # Dry-run leaves every file in place, so rescanning after
+            # each campaign event would re-report the same files.
+            # Run the scan once per campaign window there.
+            now = time.time()
+            last = getattr(self, "_last_postkill", 0.0)
+            if (not config.DRY_RUN
+                    or now - last > config.CAMPAIGN_WINDOW_SECONDS):
+                self._last_postkill = now
+                self._post_kill_verification()
 
         # ── Mirror the rename-back in the entropy history ──
         # execute_response may have moved a renamed file back to its
@@ -1159,6 +1215,7 @@ class PipelineRunner:
             f"{repaired} file(s) repaired")
 
     def stop(self):
+        self._heartbeat_running = False
         self.pipeline.stop()
         # Give queued ledger writes a chance to complete before the runner
         # exits. This prevents daemon-thread writes from being silently lost.
