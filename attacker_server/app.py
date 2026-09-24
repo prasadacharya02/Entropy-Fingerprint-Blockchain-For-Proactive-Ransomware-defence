@@ -4,7 +4,13 @@ import hmac
 import ipaddress
 import json
 import os
+import re
+import signal
+import subprocess
 import sys
+import threading
+import time
+from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -30,6 +36,201 @@ try:
     from create_fake_files import restore_all_files
 except Exception:
     restore_all_files = None
+
+
+# ============================================================
+# Malware process manager
+# ============================================================
+# The attack runs as a SEPARATE OS process (python -m
+# attacker_server.ransomware_engines <family>). This mirrors real
+# malware — a rogue process on the machine — so the defender's
+# response (kill the PID that has the file open + quarantine the
+# file) acts on a genuine, verifiable process instead of a thread
+# inside the attacker console.
+#
+#   operator stop  -> SIGINT -> clean exit (code 0)
+#   defender kill  -> SIGTERM -> exit code 42 (KILLED_BY_DEFENDER)
+#
+# The streamed process output becomes the console log.
+# ============================================================
+
+_proc_lock = threading.Lock()
+_proc = None            # subprocess.Popen | None
+_proc_family = None     # selected family id
+_stream = deque(maxlen=300)
+_control_path = os.path.join(ROOT_DIR, "attacker_control.json")
+
+_KILLED_EXIT = 42
+
+_SCAN_RE = re.compile(
+    r"scan complete:\s*(\d+)\s*targets,\s*(\d+)\s*skipped"
+)
+_HIT_RE = re.compile(r"encrypted\s+(\d+)/(\d+)")
+_NOTE_RE = re.compile(r"Note dropped:")
+_BYTES_RE = re.compile(r"\((\d+)\s*bytes\)")
+
+
+def _write_control(payload):
+    """Merge *payload* into the operator control file."""
+    current = {}
+    try:
+        with open(_control_path, encoding="utf-8") as fh:
+            current = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    current.update(payload)
+    try:
+        with open(_control_path, "w", encoding="utf-8") as fh:
+            json.dump(current, fh)
+    except OSError:
+        pass
+
+
+def _stream_reader(proc):
+    """Copy the child's stdout into the in-memory console log.
+
+    When the stream closes (the child exited — killed by the defender
+    or finished), reap the child here. Without this the child sits as
+    a zombie until something polls the console, and any *other*
+    process waiting on that PID (the defender's ProcessTerminator is
+    not the child's parent) times out on a process that is already
+    dead.
+    """
+    try:
+        for line in proc.stdout:
+            text = line.rstrip("\n")
+            if text:
+                with _proc_lock:
+                    _stream.append(text)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+
+
+def _spawn(family_id):
+    """Start the attack as a child process. Returns (ok, message)."""
+    global _proc, _proc_family
+    with _proc_lock:
+        if _proc is not None and _proc.poll() is None:
+            return False, f"{_proc_family} already running"
+        _stream.clear()
+        _write_control({"factor": 1.0, "paused": False})
+        command = [
+            sys.executable,
+            "-m",
+            "attacker_server.ransomware_engines",
+            family_id,
+            "--control",
+            _control_path,
+        ]
+        _proc = subprocess.Popen(
+            command,
+            cwd=ROOT_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        _proc_family = family_id
+    threading.Thread(
+        target=_stream_reader, args=(_proc,), daemon=True
+    ).start()
+    return True, "ok"
+
+
+def _child_state():
+    """Summarize the running (or last) attack process."""
+    with _proc_lock:
+        proc = _proc
+        family = _proc_family
+        lines = list(_stream)
+
+    if proc is None:
+        return {
+            "active": False, "family": None, "phase": "IDLE",
+            "progress": 0, "log": lines, "pid": None,
+            "defender_killed": False,
+        }
+
+    alive = proc.poll() is None
+    last = lines[-1] if lines else ""
+
+    targets = skipped = hit = total = notes = 0
+    bytes_encrypted = 0
+    for line in lines:
+        m = _SCAN_RE.search(line)
+        if m:
+            targets, skipped = int(m.group(1)), int(m.group(2))
+        m = _HIT_RE.search(line)
+        if m:
+            hit, total = int(m.group(1)), int(m.group(2))
+        if _NOTE_RE.search(line):
+            notes += 1
+        m = _BYTES_RE.search(line)
+        if m and "encrypting" in line:
+            bytes_encrypted += int(m.group(1))
+
+    defender_killed = ("TERMINATED BY DEFENSE" in last) or (
+        (not alive) and proc.returncode == _KILLED_EXIT
+    )
+
+    if defender_killed:
+        phase = "KILLED_BY_DEFENDER"
+    elif alive:
+        phase = (
+            "PAUSED"
+            if _read_control_or_default().get("paused")
+            else "ENCRYPTING"
+        )
+    elif proc.returncode == 0:
+        phase = "COMPLETED" if total else "STOPPED"
+    else:
+        phase = "STOPPED"
+
+    return {
+        "active": alive,
+        "family": family,
+        "phase": phase,
+        "progress": round(min(100, hit / max(total, 1) * 100), 1) if total else 0,
+        "targets": targets,
+        "files_hit": hit,
+        "files_skipped": skipped,
+        "notes_dropped": notes,
+        "bytes_encrypted": bytes_encrypted,
+        "pid": proc.pid if alive else None,
+        "returncode": proc.returncode,
+        "defender_killed": defender_killed,
+        "log": lines,
+    }
+
+
+def _read_control_or_default():
+    try:
+        with open(_control_path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _stop_child(operator: bool):
+    """Stop the child: SIGINT for the operator, wait for exit."""
+    with _proc_lock:
+        proc = _proc
+    if proc is None or proc.poll() is not None:
+        return False
+    try:
+        proc.send_signal(signal.SIGINT if operator else signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        return False
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    return True
 
 
 def victim_snapshot():
@@ -303,7 +504,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/stats":
-            stats = engines.current_stats()
+            stats = _child_state()
             stats["victim"] = victim_snapshot()
             send_json(self, stats)
             return
@@ -375,7 +576,7 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 return
 
-            current = engines.current_stats()
+            current = _child_state()
 
             if current.get("active"):
                 send_json(
@@ -391,14 +592,14 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 return
 
-            ok, engine = engines.start_attack(family)
+            ok, message = _spawn(family)
 
             if not ok:
                 send_json(
                     self,
                     {
                         "ok": False,
-                        "error": "engine refused to start",
+                        "error": message,
                     },
                     status=500,
                 )
@@ -408,14 +609,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self,
                 {
                     "ok": True,
-                    "family": engine.name,
-                    "stats": engine.get_stats(),
+                    "family": family,
+                    "pid": _child_state()["pid"],
+                    "stats": _child_state(),
                 },
             )
             return
 
         if path == "/api/stop":
-            stopped = engines.stop_attack()
+            # Operator stop = SIGINT (clean exit), distinct from the
+            # defender's SIGTERM kill so the console can tell them apart.
+            stopped = _stop_child(operator=True)
             send_json(
                 self,
                 {
@@ -426,49 +630,48 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/pause":
-            engine = engines._active_engine
-            paused = bool(engine and engine.pause())
+            state = _child_state()
+            ok = bool(state.get("active"))
+            if ok:
+                _write_control({"paused": True})
 
             send_json(
                 self,
                 {
-                    "ok": paused,
-                    "paused": paused,
+                    "ok": ok,
+                    "paused": ok,
                 },
             )
             return
 
         if path == "/api/resume":
-            engine = engines._active_engine
-            resumed = bool(engine and engine.resume())
+            state = _child_state()
+            ok = bool(state.get("active"))
+            if ok:
+                _write_control({"paused": False})
 
             send_json(
                 self,
                 {
-                    "ok": resumed,
+                    "ok": ok,
                     "paused": False,
                 },
             )
             return
 
         if path == "/api/speed":
-            engine = engines._active_engine
-
             try:
                 factor = float(
                     data.get("factor", 1.0)
                 )
 
-                speed = (
-                    engine.set_speed(factor)
-                    if engine
-                    else None
-                )
+                speed = min(5.0, max(0.1, factor))
+                _write_control({"factor": speed})
 
                 send_json(
                     self,
                     {
-                        "ok": speed is not None,
+                        "ok": True,
                         "speed_factor": speed,
                     },
                 )
@@ -484,15 +687,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/reset":
-            current = engines.current_stats()
-
-            if current.get("active"):
-                engines.stop_attack()
-
-                if engines._active_engine:
-                    engines._active_engine.join(
-                        timeout=4
-                    )
+            if _child_state().get("active"):
+                _stop_child(operator=True)
 
             if restore_all_files is None:
                 send_json(

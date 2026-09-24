@@ -30,8 +30,12 @@ Thumbs.db
 *.db
 *.db-shm
 *.db-wal
+attacker_control.json
 logs/
 quarantine_storage/
+backup_storage/
+reports/
+benchmark/results/
 
 # Generated lab and ML artifacts
 victim_server/user_files/
@@ -44,3 +48,6 @@ ai/*.pt
 build/
 dist/
 *.egg-info/
+
+# Agent session scratch (memory, not repo content)
+.arena/

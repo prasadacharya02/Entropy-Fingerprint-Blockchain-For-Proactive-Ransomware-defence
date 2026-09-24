@@ -100,6 +100,15 @@
     .btn-primary:hover { background: #005a9e; }
     .btn-secondary { background: #f0f0f0; color: #333; border: 1px solid #ddd !important; }
     .vault-err { color: var(--red); font-size: 12px; min-height: 16px; text-align: center; font-weight: 600; }
+    /* Quarantine vault view */
+    .q-banner { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; padding: 12px 14px; margin-bottom: 12px; border: 1px solid #cfe6cf; background: #f3faf3; border-radius: 8px; font-size: 13px; color: #1d4d1d; }
+    .q-banner b { font-size: 15px; }
+    .q-banner .q-path { color: #5b6b5b; font-family: Consolas, monospace; font-size: 12px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+    .pill.killed { background: #fde7e9; color: #a4262c; }
+    .pill.contained { background: #e6f4ea; color: #0b6a0b; }
+    .pill.ro { background: #eef1f5; color: #4a5568; }
+    .q-sub { color: var(--muted); font-size: 11px; font-family: Consolas, monospace; }
   </style>
 </head>
 <body>
@@ -158,9 +167,12 @@
       </aside>
 
       <section class="main">
+        <!-- Neutral status bar, like a real explorer: item counts only.
+             Attack assessment is not part of the file explorer — that
+             is the SOC dashboard's job. -->
         <div class="status-strip">
           <div class="stats-mini" id="summaryText">Loading…</div>
-          <div id="healthBadge" class="badge ok">Healthy</div>
+          <div class="badge protected">🛡️ Ransomware Shield · Monitoring</div>
         </div>
         <div class="content" id="content"></div>
       </section>
@@ -201,7 +213,7 @@
         <input id="vaultUser" value="victim_user" autocomplete="off" />
 
         <label>PIN / Password</label>
-        <input id="vaultPin" type="password" placeholder="Enter PIN"
+        <input id="vaultPin" type="password" inputmode="numeric" placeholder="Enter vault PIN"
                autocomplete="off" onkeydown="if(event.key==='Enter') vaultLogin()" />
 
         <div id="vaultErr" class="vault-err"></div>
@@ -227,15 +239,6 @@
     document.querySelectorAll(".side-item").forEach(el => el.classList.remove("active"));
     if (!folder) { document.getElementById("navThisPC")?.classList.add("active"); return; }
     document.querySelectorAll(`.side-item[data-goto="${folder}"]`).forEach(el => el.classList.add("active"));
-  }
-
-  function statusBadge(status) {
-    const s = (status || "OPERATIONAL").toUpperCase();
-    if (s === "OPERATIONAL") return { text: "Healthy", cls: "ok" };
-    if (s === "PROTECTED") return { text: "Protected · Quarantined", cls: "protected" };
-    if (s === "UNDER ATTACK") return { text: "UNDER ATTACK", cls: "warn" };
-    if (s === "COMPROMISED") return { text: "COMPROMISED", cls: "danger" };
-    return { text: s, cls: "warn" };
   }
 
   async function fetchJSON(url) {
@@ -276,24 +279,21 @@
     else showVaultLogin();
   }
 
-  async function refreshStatus() {
-    try {
-      statusCache = await fetchJSON("/api/status");
-      const b = statusBadge(statusCache.system_status);
-      const badge = document.getElementById("healthBadge");
-      badge.className = "badge " + b.cls;
-      badge.textContent = b.text;
-      vaultUnlocked = !!statusCache.vault_unlocked;
-      updateVaultUI();
+  // Neutral explorer status bar — item counts only, exactly like the
+  // Windows File Explorer status bar. No attack intelligence here.
+  function setNeutralStatus(text) {
+    const el = document.getElementById("summaryText");
+    if (el) el.textContent = text || "";
+  }
 
-      const q = statusCache.quarantined_files || 0;
-      const enc = statusCache.encrypted_files || 0;
-      document.getElementById("summaryText").innerHTML =
-        `<span><b>${statusCache.total_files || 0}</b> user files</span>` +
-        `<span><b>${enc}</b> encrypted</span>` +
-        `<span><b>${q}</b> quarantined</span>` +
-        (statusCache.detected_family ? `<span>family: <b>${statusCache.detected_family}</b></span>` : "");
-    } catch (e) { console.error(e); }
+  async function refreshStatus() {
+    await checkVault();
+    if (currentFolder) {
+      setNeutralStatus(`${fileCache.length} item${fileCache.length === 1 ? "" : "s"}`);
+    } else {
+      const total = folderCache.filter(f => f.name !== "Quarantine").reduce((a, f) => a + (f.file_count || 0), 0);
+      setNeutralStatus(`${total} files`);
+    }
   }
 
   async function showHome() {
@@ -308,27 +308,26 @@
 
     const totalFiles = folderCache.filter(f => f.name !== "Quarantine").reduce((a, f) => a + (f.file_count || 0), 0);
 
+    // A plain "This PC" view: folders with item counts + the disk.
+    // No attack status, no "encrypted" markers.
     const cards = [
       ...folderCache.map(f => ({
         name: f.name, count: f.file_count, size: f.size,
-        encrypted: f.encrypted, status: f.status, locked: f.locked, isFolder: true,
+        locked: f.locked, isFolder: true,
       })),
-      { name: "Local Disk (C:)", count: totalFiles, size: "", encrypted: 0, status: "disk", isFolder: false }
+      { name: "Local Disk (C:)", count: totalFiles, size: "", locked: false, isFolder: false }
     ];
 
     const html = `<div class="grid">${cards.map(c => {
       const isQ = c.name === "Quarantine";
-      const compromised = c.status === "compromised";
       const isLocked = c.locked;
-      let meta = "";
-      if (isQ && isLocked) meta = `🔒 Locked · ${c.count || 0} files`;
-      else if (isQ) meta = `${c.count} blocked file${c.count === 1 ? "" : "s"}`;
-      else if (c.status === "disk") meta = `NTFS · ${c.count} files`;
-      else if (compromised) meta = `${c.count} items · encrypted`;
-      else meta = `${c.count} items`;
+      let meta;
+      if (isQ && isLocked) meta = `🔒 Locked`;
+      else if (isQ) meta = `${c.count || 0} items`;
+      else meta = `${c.count || 0} items`;
 
-      const cls = ["card", compromised ? "compromised" : "", isQ ? "quarantine" : "", isLocked ? "locked" : ""].join(" ");
-      const click = c.status === "disk" ? "showHome()" : `openFolder('${c.name}')`;
+      const cls = ["card", isQ ? "quarantine" : "", isLocked ? "locked" : ""].join(" ");
+      const click = c.name === "Local Disk (C:)" ? "showHome()" : `openFolder('${c.name}')`;
 
       return `<div class="${cls}" onclick="${click}">
                 <div class="folder-ico">${FOLDER_ICONS[c.name] || "📁"}</div>
@@ -337,7 +336,7 @@
               </div>`;
     }).join("")}</div>`;
     document.getElementById("content").innerHTML = html;
-    await refreshStatus();
+    setNeutralStatus(`${totalFiles} files`);
   }
 
   async function openFolder(name) {
@@ -378,8 +377,9 @@
     await refreshStatus();
   }
 
+  // Icon from the extension only — a real explorer never reveals
+  // whether a file is "encrypted"; it just shows a file icon.
   function fileIcon(file) {
-    if (currentFolder === "Quarantine" || file.encrypted) return "🔒";
     const ext = (file.extension || "").toLowerCase();
     if ([".jpg",".jpeg",".png",".gif",".bmp"].includes(ext)) return "🖼️";
     if ([".doc",".docx"].includes(ext)) return "📄";
@@ -391,7 +391,44 @@
     return "📄";
   }
 
+  function renderQuarantine(files) {
+    const killed = {};
+    files.forEach(f => { if (f.process_killed && f.killed_pid) killed[f.killed_pid] = f.killed_name; });
+    const killedTxt = Object.keys(killed).length
+      ? Object.entries(killed).map(([pid, n]) => `PID ${pid} (${escapeHtml(n || "?")})`).join(", ")
+      : "none recorded";
+    const rows = files.map(f => `
+      <tr onclick="previewFile('Quarantine', \`${f.name.replace(/`/g, "")}\`)">
+        <td><div class="file-name">
+          <div class="f-ico">🦠</div>
+          <div>${escapeHtml(f.original_name)}<div class="q-sub">${escapeHtml(f.name)}</div></div>
+        </div></td>
+        <td>${escapeHtml(f.from_folder || "-")}</td>
+        <td>${escapeHtml(f.quarantined_at || f.modified || "-")}</td>
+        <td>${f.process_killed
+              ? `<span class="pill killed">KILLED PID ${f.killed_pid}</span>`
+              : `<span class="pill contained">CONTAINED</span>`}
+            ${f.read_only ? '<span class="pill ro">READ-ONLY</span>' : ""}</td>
+        <td>${f.size || "-"}</td>
+      </tr>`).join("");
+    document.getElementById("content").innerHTML = `
+      <div class="q-banner">
+        <b>🛡️ ${files.length} file${files.length === 1 ? "" : "s"} quarantined</b>
+        <span>Ransomware process killed: <b>${killedTxt}</b></span>
+        <span class="q-path">Clean copies were restored to their original folders.</span>
+      </div>
+      <table class="file-table">
+        <thead><tr>
+          <th style="width:38%">Original file</th><th style="width:14%">From</th>
+          <th style="width:18%">Quarantined</th><th style="width:20%">Response</th>
+          <th style="width:10%">Size</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
   function renderFiles(files) {
+    if (currentFolder === "Quarantine" && files.length) { renderQuarantine(files); return; }
     if (!files.length) {
       document.getElementById("content").innerHTML = `
         <div class="empty">
@@ -402,34 +439,25 @@
       return;
     }
 
+    // Plain explorer columns — Name / Date modified / Type / Size.
+    // No status pills, no family labels, no note markers.
     const rows = files.map(f => {
-      const isQ = currentFolder === "Quarantine" || f.quarantined;
-      const pill = isQ
-        ? `<span class="pill q">ISOLATED</span>`
-        : (f.encrypted
-            ? `<span class="pill enc">ENCRYPTED${f.family ? " · " + f.family : ""}</span>`
-            : `<span class="pill ok">SAFE</span>`);
-      const icoCls = isQ ? "q" : (f.encrypted ? "locked" : "");
       return `<tr onclick="previewFile('${currentFolder}', \`${f.name.replace(/`/g, "")}\`)">
                 <td><div class="file-name">
-                  <div class="f-ico ${icoCls}">${fileIcon(f)}</div>
-                  <div>
-                    <div>${escapeHtml(f.name)}</div>
-                    ${f.is_note ? `<div style="font-size:11px;color:#d13438;font-weight:600;">Ransom note</div>` : ""}
-                  </div>
+                  <div class="f-ico">${fileIcon(f)}</div>
+                  <div>${escapeHtml(f.name)}</div>
                 </div></td>
                 <td>${f.modified || "-"}</td>
                 <td>${f.extension || "File"}</td>
                 <td>${f.size || "-"}</td>
-                <td>${pill}</td>
               </tr>`;
     }).join("");
 
     document.getElementById("content").innerHTML = `
       <table class="file-table">
         <thead><tr>
-          <th style="width:42%">Name</th><th style="width:16%">Date modified</th>
-          <th style="width:12%">Type</th><th style="width:12%">Size</th><th style="width:18%">Status</th>
+          <th style="width:50%">Name</th><th style="width:20%">Date modified</th>
+          <th style="width:15%">Type</th><th style="width:15%">Size</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
@@ -438,7 +466,7 @@
   function filterFiles() {
     if (currentFolder == null) return;
     const q = (document.getElementById("searchBox").value || "").toLowerCase();
-    const filtered = fileCache.filter(f => (f.name || "").toLowerCase().includes(q));
+    const filtered = fileCache.filter(f => ((f.name || "") + " " + (f.original_name || "")).toLowerCase().includes(q));
     renderFiles(filtered);
   }
 
@@ -490,10 +518,12 @@
         vaultUnlocked = true;
         updateVaultUI();
         hideVaultLogin();
-        if (currentFolder === "Quarantine") await openFolder("Quarantine");
-        else await refreshStatus();
+        // Unlocking the vault always opens it.
+        await openFolder("Quarantine");
       } else {
-        errEl.textContent = data.message || "Access denied.";
+        errEl.textContent = "Wrong PIN — access denied.";
+        const pinEl = document.getElementById("vaultPin");
+        pinEl.value = ""; pinEl.focus();
       }
     } catch { errEl.textContent = "Login failed. Try again."; }
   }
@@ -525,9 +555,11 @@
   setInterval(tickClock, 1000);
   setInterval(refreshStatus, 3000);
   setInterval(() => {
+    // Don't re-render (or re-open the login prompt) under an open dialog.
+    if (document.querySelector(".modal-bg.show")) return;
     if (currentFolder) openFolder(currentFolder);
     else showHome();
-  }, 5000);
+  }, 3000);
 </script>
 </body>
 </html>

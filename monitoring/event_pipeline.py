@@ -33,6 +33,7 @@ import config
 
 from monitoring.watchdog_monitor import FileMonitor
 from monitoring.event_deduplicator import EventDeduplicator
+from monitoring.defense_guard import collect_threat_flags
 from entropy.entropy_calculator  import EntropyAnalyzer, visualize_entropy
 
 # ── Setup Logging ─────────────────────────────────────────
@@ -119,6 +120,15 @@ class AnalyzedEventStore:
 # EVENT PIPELINE
 # The main connector between monitor and entropy calculator.
 # ============================================================
+
+def _is_genuine_rename(event: dict) -> bool:
+    """True unless the 'rename' source still exists (inode reuse)."""
+    src = event.get('original_path') or ''
+    dest = event.get('dest_path') or event.get('file_path') or ''
+    if not src or not dest or src == dest:
+        return False
+    return not os.path.exists(src)
+
 
 class EventPipeline:
     """
@@ -217,23 +227,48 @@ class EventPipeline:
 
         evt_type = event['event_type']
 
+        # ── Reject fake renames ──
+        # The polling observer infers a rename from a matching inode.
+        # When files are deleted and recreated (lab reset, the
+        # defender's own restore), freed inodes are reused, so it
+        # reports renames between UNRELATED files ("Tax_Returns.pdf ->
+        # Notes.txt"). Trusting those moved entropy + backup history to
+        # the wrong file, so later restores wrote the wrong content. A
+        # genuine rename leaves the source path gone.
+        if evt_type == 'RENAMED' and not _is_genuine_rename(event):
+            event = dict(event)
+            event['event_type'] = 'CREATED'
+            event['original_path'] = event.get('dest_path') or \
+                event.get('file_path')
+            event['file_path'] = event['original_path']
+            event['dest_path'] = None
+            event['ext_changed'] = False
+            evt_type = 'CREATED'
+
+        # Folders are not documents (a lab reset recreates them).
+        if os.path.isdir(event.get('file_path') or ''):
+            return
+
         # ── CREATED and MODIFIED go straight to entropy ──
         if evt_type in ('CREATED', 'MODIFIED'):
             self._enqueue_event(event)
 
         # ── RENAMED = analyze the NEW filename (dest_path) ──
-        # This catches ransomware renaming .txt → .locked
+        # This catches ransomware renaming .txt → .locked.
+        # Note: the monitor already sets file_path=dest on RENAMED
+        # events, so the pre-rename path is in 'original_path' —
+        # transfer_history from the real source or the pre-rename
+        # entropy history (and therefore the delta signal) is lost.
         elif evt_type == 'RENAMED':
             dest = event.get('dest_path')
+            src = event.get('original_path') or event.get('file_path')
             if dest and os.path.exists(dest):
                 # Create a copy of the event with dest_path as the file_path
                 # This makes the entropy analyzer read the .locked file
-                self.entropy_analyzer.transfer_history(
-                    event.get('file_path'), dest
-                )
+                self.entropy_analyzer.transfer_history(src, dest)
                 renamed_event = dict(event)
                 renamed_event['file_path'] = dest
-                renamed_event['original_path'] = event['file_path']
+                renamed_event['original_path'] = src
                 self._enqueue_event(renamed_event)
             else:
                 self._store_without_entropy(event)
@@ -281,11 +316,15 @@ class EventPipeline:
                 self.stats['total_skipped'] += 1
                 return
 
-        # ── Skip tiny files ──
+        # ── Tiny files: too small for a meaningful entropy score, but
+        #    the change itself must still reach the SOC timeline (a new
+        #    empty/short note used to vanish without a trace). ──
         try:
             size = os.path.getsize(file_path)
             if size < 10:
                 self.stats['total_skipped'] += 1
+                self._store_without_entropy(
+                    event, reason='File too small for entropy analysis')
                 return
         except Exception:
             self.stats['total_skipped'] += 1
@@ -299,7 +338,9 @@ class EventPipeline:
             self.stats['total_skipped'] += 1
             return
 
-        enriched_event = self._merge_event(event, entropy_result)
+        enriched_event = self._with_threat_flags(
+            self._merge_event(event, entropy_result)
+        )
         self.analyzed_store.add(enriched_event)
         self.stats['total_analyzed'] += 1
 
@@ -308,7 +349,7 @@ class EventPipeline:
 
         self._log_analyzed_event(enriched_event)
 
-    def _store_without_entropy(self, event):
+    def _store_without_entropy(self, event, reason='File deleted or renamed'):
         """
         Store a file event that doesn't need entropy analysis.
         (DELETED events, or RENAMED where dest is gone)
@@ -320,6 +361,7 @@ class EventPipeline:
             'event_type'      : event['event_type'],
             'file_path'       : event['file_path'],
             'dest_path'       : event.get('dest_path'),
+            'original_path'   : event.get('original_path'),
             'file_extension'  : event['file_extension'],
             'events_per_sec'  : event['events_per_sec'],
             'events_in_window': event['events_in_window'],
@@ -332,7 +374,7 @@ class EventPipeline:
             'file_hash'       : None,
             'threat_score'    : 0.0,
             'is_suspicious'   : event.get('ext_changed', False),
-            'reason'          : 'File deleted or renamed',
+            'reason'          : reason,
             'indicators'      : [],
 
             # Speed flag
@@ -346,8 +388,23 @@ class EventPipeline:
             'pipeline_stage'  : 'monitor_only',
         }
 
+        # Defense-tamper signals matter on this path too: a DELETED
+        # event under the backup store is the whole point.
+        enriched = self._with_threat_flags(enriched)
+
         self.analyzed_store.add(enriched)
         self.stats['total_analyzed'] += 1
+
+    def _with_threat_flags(self, event: dict) -> dict:
+        """Attach hard-confirmation signals (ransom note, defense
+        tamper) before the decision engine sees the event. The
+        benchmark harness calls the same collect_threat_flags
+        function, so both paths stay identical."""
+        try:
+            event.update(collect_threat_flags(event))
+        except Exception as flag_err:
+            log.error(f"Threat flag collection failed: {flag_err}")
+        return event
 
     def _merge_event(self, file_event, entropy_result):
         """
@@ -375,12 +432,15 @@ class EventPipeline:
         if file_event.get('ext_changed', False):
             threat_score = min(100.0, threat_score + 20.0)
 
-        return {
+        combined = {
             # ── File Event Data ────────────────────────────
             'event_id'         : file_event['event_id'],
             'timestamp'        : file_event['timestamp'],
             'event_type'       : file_event['event_type'],
             'file_path'        : file_event['file_path'],
+            # RENAMED events carry the pre-rename path (needed for
+            # backup-history transfer so restore works after disguise).
+            'original_path'    : file_event.get('original_path'),
             'file_extension'   : file_event['file_extension'],
             'file_size'        : entropy_result['file_size'],
             'events_per_sec'   : file_event['events_per_sec'],
@@ -419,6 +479,7 @@ class EventPipeline:
             'ai_action'        : None,
             'action_taken'     : None,
         }
+        return combined
 
     def _log_analyzed_event(self, event):
         """Log a nicely formatted analysis result."""

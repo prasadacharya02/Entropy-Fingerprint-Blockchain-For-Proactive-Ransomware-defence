@@ -6,24 +6,19 @@
 import sys
 import os
 import json
-import hashlib
-import random
 import threading
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ── Fix paths FIRST before anything else ──────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-<<<<<<< HEAD
 # ── Import config and modules ───────────
-=======
-# ── Now import config and other modules ───────────
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 import config
 from storage.database import connect, init_db as initialize_database
+from storage.database import read_pipeline_heartbeat
 from blockchain.connector import BlockchainConnector
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
@@ -38,20 +33,10 @@ log = logging.getLogger("Dashboard")
 
 
 def _api_error(message="dashboard service unavailable", status=500):
-<<<<<<< HEAD
     return jsonify({"error": message, "status": status}), status
 
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
-=======
-    """Return a structured error instead of disguising failures as no data."""
-    return jsonify({"error": message, "status": status}), status
-
-
-# Socket.IO is same-origin by default; do not permit arbitrary websites to
-# subscribe to live process/file telemetry.
-socketio = SocketIO(app, cors_allowed_origins=[], async_mode="threading")
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 bc       = BlockchainConnector()
 
 
@@ -84,7 +69,6 @@ ACTION_MAP = {
 
 @app.route("/")
 def index():
-<<<<<<< HEAD
     """Main route mapped back to the SOC Dashboard."""
     return render_template("dashboard.html")
 
@@ -95,16 +79,6 @@ def platform_dashboard():
     return render_template("platform.html")
 
 
-=======
-    return render_template("platform.html")
-
-
-@app.route("/legacy")
-def legacy_dashboard():
-    return render_template("dashboard.html")
-
-
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 @app.route("/api/platform")
 def platform():
     status = bc.get_status()
@@ -119,6 +93,49 @@ def platform():
         "is_blockchain": status.get("is_blockchain", False),
         "positioning": "Purple-team range for SOC training — not an EDR replacement",
     })
+
+
+# A heartbeat older than this means the detection pipeline is not running.
+PIPELINE_STALE_SECONDS = 8.0
+
+
+def pipeline_status() -> dict:
+    """Liveness + watch folders of the detection pipeline process."""
+    try:
+        db = get_db()
+        hb = read_pipeline_heartbeat(db)
+        db.close()
+    except Exception:
+        log.exception("Pipeline status read failed")
+        hb = None
+    victim = os.path.abspath(config.VICTIM_USER_FILES)
+    if not hb:
+        return {
+            "online": False, "age_seconds": None, "watch_folders": [],
+            "watching_victim": False, "dry_run": None, "engine": None,
+            "stats": {}, "victim_folder": victim,
+        }
+    age = max(0.0, time.time() - float(hb["heartbeat"]))
+    folders = [os.path.abspath(f) for f in hb["watch_folders"]]
+    watching_victim = any(
+        victim == f or victim.startswith(f + os.sep) for f in folders
+    )
+    return {
+        "online": age <= PIPELINE_STALE_SECONDS,
+        "age_seconds": round(age, 1),
+        "pid": hb.get("pid"),
+        "watch_folders": folders,
+        "watching_victim": watching_victim,
+        "dry_run": hb["dry_run"],
+        "engine": hb.get("engine"),
+        "stats": hb.get("stats") or {},
+        "victim_folder": victim,
+    }
+
+
+@app.route("/api/pipeline")
+def pipeline():
+    return jsonify(pipeline_status())
 
 
 @app.route("/api/health")
@@ -139,6 +156,8 @@ def stats():
                     THEN 1 ELSE 0 END)      AS terminated,
                 SUM(CASE WHEN action = 3
                     THEN 1 ELSE 0 END)      AS quarantined,
+                SUM(CASE WHEN restore_result IS NOT NULL
+                    THEN 1 ELSE 0 END)      AS recovery,
                 ROUND(AVG(entropy), 2)      AS avg_entropy,
                 ROUND(MAX(entropy), 2)      AS max_entropy
             FROM events
@@ -152,6 +171,7 @@ def stats():
             "threats"      : row["threats"]     or 0,
             "terminated"   : row["terminated"]  or 0,
             "quarantined"  : row["quarantined"] or 0,
+            "recovery"     : row["recovery"]    or 0,
             "avg_entropy"  : row["avg_entropy"] or 0,
             "max_entropy"  : row["max_entropy"] or 0,
             "blockchain_tx": bc_count
@@ -308,6 +328,47 @@ def live_stats():
         return _api_error("live statistics unavailable")
 
 
+@app.route("/api/backup")
+def backup_status():
+    """Status of the clean-copy backup store (recovery source)."""
+    try:
+        from response.backup_manager import BackupManager
+        manager = BackupManager()
+        return jsonify({
+            "stats": manager.stats(),
+            "files": manager.list_backups(),
+            "dry_run": bool(config.DRY_RUN),
+        })
+    except Exception:
+        log.exception("Backup API failed")
+        return _api_error("backup service unavailable")
+
+
+@app.route("/api/reports")
+def reports():
+    """List forensic incident reports, newest first."""
+    try:
+        from response.forensic_report import list_reports
+        return jsonify(list_reports())
+    except Exception:
+        log.exception("Reports API failed")
+        return _api_error("forensic report service unavailable")
+
+
+@app.route("/api/reports/<path:name>")
+def report_detail(name):
+    """Fetch one forensic report by file name."""
+    try:
+        from response.forensic_report import load_report
+        data = load_report(name)
+        if data is None:
+            return _api_error("report not found", status=404)
+        return jsonify(data)
+    except Exception:
+        log.exception("Report detail API failed")
+        return _api_error("forensic report service unavailable")
+
+
 # ═══════════════════════════════════════════════════
 # WEBSOCKET — Real Time Push
 # ═══════════════════════════════════════════════════
@@ -318,16 +379,62 @@ def handle_connect():
     emit("status", {"message": "Connected to Entropy Dashboard"})
 
 
+def _last_event_id() -> int:
+    """Highest row id already pushed to websocket clients (per process)."""
+    try:
+        db = get_db()
+        row = db.execute("SELECT COALESCE(MAX(id), 0) AS last_id FROM events").fetchone()
+        db.close()
+        return int(row["last_id"] or 0)
+    except Exception:
+        return 0
+
+
 def push_updates():
-<<<<<<< HEAD
-=======
-    """Background thread — pushes live data every 1 second"""
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
+    """Real-time push loop.
+
+    Two channels, both driven by the shared events database (the
+    pipeline process writes, the dashboard process reads):
+
+    * ``new_event``   — every filesystem/detection event as soon as it
+                        is persisted (sub-second), full row payload so
+                        the SOC timeline, entropy graph, and alert
+                        panel update live without polling.
+    * ``live_update`` — counter heartbeat (totals / threats).
+    """
+    last_id = _last_event_id()
     while True:
         try:
             with app.app_context():
-                db  = get_db()
-                row = db.execute("""
+                # ── 1) Push any events the pipeline persisted since
+                #       the last pass (this is the real-time channel).
+                db = get_db()
+                new_rows = db.execute(
+                    "SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 100",
+                    (last_id,),
+                ).fetchall()
+                if new_rows:
+                    for row in new_rows:
+                        try:
+                            socketio.emit("new_event", dict(row))
+                        except Exception:
+                            log.exception("new_event emit failed")
+                        last_id = int(row["id"])
+                else:
+                    # DB was reset/rotated under us — resync the cursor
+                    # so future events are still pushed.
+                    cur_max = int(
+                        db.execute(
+                            "SELECT COALESCE(MAX(id), 0) AS m FROM events"
+                        ).fetchone()["m"] or 0
+                    )
+                    if cur_max < last_id:
+                        last_id = cur_max
+                db.close()
+
+                # ── 2) Counter heartbeat.
+                db = get_db()
+                stat = db.execute("""
                     SELECT COUNT(*) AS total,
                            SUM(CASE WHEN action >= 1
                                THEN 1 ELSE 0 END) AS threats
@@ -336,13 +443,14 @@ def push_updates():
                 db.close()
 
                 socketio.emit("live_update", {
-                    "total"   : row["total"]   or 0,
-                    "threats" : row["threats"] or 0,
-                    "time"    : datetime.now().strftime("%H:%M:%S")
+                    "total"   : stat["total"]   or 0,
+                    "threats" : stat["threats"] or 0,
+                    "time"    : datetime.now().strftime("%H:%M:%S"),
+                    "pipeline": pipeline_status(),
                 })
         except Exception:
             log.exception("Live update push failed")
-        time.sleep(1)
+        time.sleep(0.4)
 
 
 # ═══════════════════════════════════════════════════
@@ -351,10 +459,6 @@ def push_updates():
 
 @app.route("/api/dqn/last")
 def dqn_last_decision():
-<<<<<<< HEAD
-=======
-    """Show persisted decision metadata, not fabricated scores."""
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     try:
         db = get_db()
         row = db.execute("""
@@ -414,10 +518,6 @@ def dqn_last_decision():
 
 @app.route("/api/processes")
 def flagged_processes():
-<<<<<<< HEAD
-=======
-    """Get processes flagged by our detection"""
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     try:
         db = get_db()
         rows = db.execute("""
@@ -449,89 +549,26 @@ def flagged_processes():
 
 @app.route("/api/demo/trigger", methods=["POST"])
 def demo_trigger():
-<<<<<<< HEAD
-    """Inject ransomware events for demo + log to blockchain."""
-    try:
-        db = get_db()
+    """Demo injection is disabled and rejected with 409 Conflict.
 
-        demo_files = [
-            "financial_report_Q3.xlsx",
-            "customer_database.db",
-            "employee_records.docx",
-            "product_designs.pdf",
-            "source_code.zip"
-        ]
-
-        base_time = datetime.now()
-        injected_count = 0
-
-        for i, fname in enumerate(demo_files):
-            event_time = base_time + timedelta(seconds=i)
-            fake_path  = f"C:\\Users\\demo\\Documents\\{fname}.locked"
-            entropy    = round(random.uniform(7.85, 7.99), 4)
-            delta      = round(random.uniform(2.5, 3.5), 4)
-            fake_pid   = random.randint(1000, 9999)
-            fingerprint = hashlib.sha256(fake_path.encode()).hexdigest()
-
-            # 1. Save to SQLite database
-            db.execute("""
-                INSERT INTO events
-                (timestamp, file_path, event_type, entropy, entropy_delta,
-                 pid, process_name, action, status)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            """, (
-                event_time.isoformat(),
-                fake_path,
-                "RENAMED",
-                entropy,
-                delta,
-                fake_pid,
-                "ransomware_demo.exe",
-                3,
-                "TERMINATED+QUARANTINED"
-            ))
-
-            # 2. ALSO log to Blockchain
-            try:
-                if bc:
-                    bc.log_event({
-                        "fingerprint" : fingerprint,
-                        "threat_type" : "ransomware",
-                        "pid"         : fake_pid,
-                        "entropy"     : entropy,
-                        "process"     : "ransomware_demo.exe",
-                        "file_path"   : fake_path,
-                        "action"      : "TERMINATE_AND_QUARANTINE",
-                        "status"      : "confirmed"
-                    })
-            except Exception as bc_err:
-                print(f"[DEMO] Blockchain log error: {bc_err}")
-
-            injected_count += 1
-
-        db.commit()
-        db.close()
-
-        return jsonify({"status": "ok", "injected": injected_count})
-
-    except Exception as e:
-        log.exception("Demo trigger failed")
-        return _api_error("demo trigger failed")
-=======
-    """Refuse fabricated events; the attacker lab generates real fixture activity."""
+    Synthetic events must come from the controlled attack simulator
+    (attacker console), which modifies only the victim fixture estate.
+    Fabricated events injected from the dashboard would pollute the
+    event log and the audit ledger, so the endpoint refuses loudly
+    instead of silently complying.
+    """
     return jsonify({
         "status": "rejected",
-        "error": "synthetic event injection is disabled; use the attacker console",
+        "error": (
+            "Demo injection is disabled. Run a controlled simulation "
+            "from the attacker console (http://127.0.0.1:8001) against "
+            "the victim fixture estate."
+        ),
     }), 409
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 
 
 @app.route("/api/threat-level")
 def threat_level():
-<<<<<<< HEAD
-=======
-    """Calculate current threat severity"""
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     try:
         db = get_db()
         row = db.execute("""
@@ -572,69 +609,6 @@ def threat_level():
         return _api_error("threat level unavailable")
 
 
-<<<<<<< HEAD
-=======
-@app.route("/api/folders")
-def platform_folders():
-    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
-    import importlib
-    victim_app = importlib.import_module("victim_server.app")
-    with victim_app.app.test_request_context():
-        response = victim_app.get_folders()
-    return response
-
-
-@app.route("/api/lab/families")
-def lab_families():
-    from catalog import list_families
-    return jsonify(list_families())
-
-
-@app.route("/api/lab/status")
-def lab_status():
-    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
-    import ransomware_engines as engines
-    from attacker_server.app import victim_snapshot
-    stats = engines.current_stats()
-    stats["victim"] = victim_snapshot()
-    stats["dry_run"] = bool(config.DRY_RUN)
-    return jsonify(stats)
-
-
-@app.route("/api/lab/launch", methods=["POST"])
-def lab_launch():
-    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
-    import ransomware_engines as engines
-    payload = request.get_json(silent=True) or {}
-    family = str(payload.get("family") or "").strip().lower()
-    if family not in engines.FAMILIES:
-        return jsonify({"ok": False, "error": "unknown family"}), 400
-    ok, engine = engines.start_attack(family)
-    if not ok:
-        return jsonify({"ok": False, "error": "engine refused to start"}), 500
-    return jsonify({"ok": True, "family": engine.name, "stats": engine.get_stats()})
-
-
-@app.route("/api/lab/stop", methods=["POST"])
-def lab_stop():
-    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
-    import ransomware_engines as engines
-    return jsonify({"ok": True, "stopped": bool(engines.stop_attack())})
-
-
-@app.route("/api/lab/reset", methods=["POST"])
-def lab_reset():
-    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
-    import ransomware_engines as engines
-    engines.stop_attack()
-    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
-    from create_fake_files import restore_all_files
-    restore_all_files()
-    from attacker_server.app import victim_snapshot
-    return jsonify({"ok": True, "victim": victim_snapshot()})
-
-
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 # ═══════════════════════════════════════════════════
 # START
 # ═══════════════════════════════════════════════════

