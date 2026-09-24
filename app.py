@@ -17,7 +17,11 @@ from datetime import datetime, timedelta
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+<<<<<<< HEAD
 # ── Import config and modules ───────────
+=======
+# ── Now import config and other modules ───────────
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 import config
 from storage.database import connect, init_db as initialize_database
 from blockchain.connector import BlockchainConnector
@@ -34,10 +38,20 @@ log = logging.getLogger("Dashboard")
 
 
 def _api_error(message="dashboard service unavailable", status=500):
+<<<<<<< HEAD
     return jsonify({"error": message, "status": status}), status
 
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+=======
+    """Return a structured error instead of disguising failures as no data."""
+    return jsonify({"error": message, "status": status}), status
+
+
+# Socket.IO is same-origin by default; do not permit arbitrary websites to
+# subscribe to live process/file telemetry.
+socketio = SocketIO(app, cors_allowed_origins=[], async_mode="threading")
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 bc       = BlockchainConnector()
 
 
@@ -70,6 +84,7 @@ ACTION_MAP = {
 
 @app.route("/")
 def index():
+<<<<<<< HEAD
     """Main route mapped back to the SOC Dashboard."""
     return render_template("dashboard.html")
 
@@ -80,6 +95,16 @@ def platform_dashboard():
     return render_template("platform.html")
 
 
+=======
+    return render_template("platform.html")
+
+
+@app.route("/legacy")
+def legacy_dashboard():
+    return render_template("dashboard.html")
+
+
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 @app.route("/api/platform")
 def platform():
     status = bc.get_status()
@@ -294,6 +319,10 @@ def handle_connect():
 
 
 def push_updates():
+<<<<<<< HEAD
+=======
+    """Background thread — pushes live data every 1 second"""
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     while True:
         try:
             with app.app_context():
@@ -322,6 +351,10 @@ def push_updates():
 
 @app.route("/api/dqn/last")
 def dqn_last_decision():
+<<<<<<< HEAD
+=======
+    """Show persisted decision metadata, not fabricated scores."""
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     try:
         db = get_db()
         row = db.execute("""
@@ -381,6 +414,10 @@ def dqn_last_decision():
 
 @app.route("/api/processes")
 def flagged_processes():
+<<<<<<< HEAD
+=======
+    """Get processes flagged by our detection"""
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     try:
         db = get_db()
         rows = db.execute("""
@@ -412,6 +449,7 @@ def flagged_processes():
 
 @app.route("/api/demo/trigger", methods=["POST"])
 def demo_trigger():
+<<<<<<< HEAD
     """Inject ransomware events for demo + log to blockchain."""
     try:
         db = get_db()
@@ -479,10 +517,21 @@ def demo_trigger():
     except Exception as e:
         log.exception("Demo trigger failed")
         return _api_error("demo trigger failed")
+=======
+    """Refuse fabricated events; the attacker lab generates real fixture activity."""
+    return jsonify({
+        "status": "rejected",
+        "error": "synthetic event injection is disabled; use the attacker console",
+    }), 409
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 
 
 @app.route("/api/threat-level")
 def threat_level():
+<<<<<<< HEAD
+=======
+    """Calculate current threat severity"""
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
     try:
         db = get_db()
         row = db.execute("""
@@ -523,6 +572,69 @@ def threat_level():
         return _api_error("threat level unavailable")
 
 
+<<<<<<< HEAD
+=======
+@app.route("/api/folders")
+def platform_folders():
+    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
+    import importlib
+    victim_app = importlib.import_module("victim_server.app")
+    with victim_app.app.test_request_context():
+        response = victim_app.get_folders()
+    return response
+
+
+@app.route("/api/lab/families")
+def lab_families():
+    from catalog import list_families
+    return jsonify(list_families())
+
+
+@app.route("/api/lab/status")
+def lab_status():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    from attacker_server.app import victim_snapshot
+    stats = engines.current_stats()
+    stats["victim"] = victim_snapshot()
+    stats["dry_run"] = bool(config.DRY_RUN)
+    return jsonify(stats)
+
+
+@app.route("/api/lab/launch", methods=["POST"])
+def lab_launch():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    payload = request.get_json(silent=True) or {}
+    family = str(payload.get("family") or "").strip().lower()
+    if family not in engines.FAMILIES:
+        return jsonify({"ok": False, "error": "unknown family"}), 400
+    ok, engine = engines.start_attack(family)
+    if not ok:
+        return jsonify({"ok": False, "error": "engine refused to start"}), 500
+    return jsonify({"ok": True, "family": engine.name, "stats": engine.get_stats()})
+
+
+@app.route("/api/lab/stop", methods=["POST"])
+def lab_stop():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    return jsonify({"ok": True, "stopped": bool(engines.stop_attack())})
+
+
+@app.route("/api/lab/reset", methods=["POST"])
+def lab_reset():
+    sys.path.insert(0, os.path.join(BASE_DIR, "attacker_server"))
+    import ransomware_engines as engines
+    engines.stop_attack()
+    sys.path.insert(0, os.path.join(BASE_DIR, "victim_server"))
+    from create_fake_files import restore_all_files
+    restore_all_files()
+    from attacker_server.app import victim_snapshot
+    return jsonify({"ok": True, "victim": victim_snapshot()})
+
+
+>>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
 # ═══════════════════════════════════════════════════
 # START
 # ═══════════════════════════════════════════════════
