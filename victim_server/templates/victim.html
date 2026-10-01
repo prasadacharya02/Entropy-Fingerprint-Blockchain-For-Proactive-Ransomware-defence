@@ -1,930 +1,1044 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<<<<<<< HEAD
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>This PC — VICTIM-PC</title>
+  <meta name="theme-color" content="#092b58" />
+  <title>Videos — File Explorer</title>
   <style>
     :root {
-      --bg: #f3f3f3; --panel: #ffffff; --border: #e5e5e5; --text: #1a1a1a;
-      --muted: #6b6b6b; --blue: #0078d4; --blue-soft: #e8f3ff;
-      --green: #107c10; --orange: #ff8c00; --red: #d13438; --sidebar: #fafafa;
+      --navy-950: #061a34;
+      --navy-900: #092b58;
+      --navy-800: #0b3a70;
+      --blue-700: #0868c7;
+      --blue-600: #1377dc;
+      --blue-100: #e7f2ff;
+      --blue-050: #f1f7ff;
+      --ink-900: #162335;
+      --ink-700: #445267;
+      --ink-500: #718096;
+      --line: #dfe7f0;
+      --line-soft: #eaf0f6;
+      --surface: #ffffff;
+      --surface-soft: #f6f9fc;
+      --surface-blue: #f3f8fe;
+      --folder-yellow: #ffc83d;
+      --folder-gold: #f2a91f;
+      --green: #1f9d65;
+      --green-soft: #eaf8f1;
+      --orange: #c77b12;
+      --orange-soft: #fff5df;
+      --danger: #c93d52;
+      --shadow-window: 0 30px 90px rgba(2, 18, 42, .40), 0 6px 24px rgba(2, 18, 42, .20);
+      --shadow-card: 0 12px 28px rgba(28, 67, 110, .09), 0 2px 6px rgba(28, 67, 110, .05);
+      --shadow-soft: 0 5px 14px rgba(28, 67, 110, .08);
+      --radius-window: 14px;
+      --radius-card: 12px;
+      --font: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: "Segoe UI", system-ui, sans-serif; background: #1b3a5f; color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px; }
-    .window { width: min(1180px, 100%); height: min(720px, 92vh); background: var(--panel); border-radius: 10px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.35); display: flex; flex-direction: column; border: 1px solid #d0d0d0; }
-    .titlebar { height: 36px; background: #fff; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 14px; user-select: none; }
-    .title-left { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-    .app-icon { width: 16px; height: 16px; border-radius: 3px; background: linear-gradient(135deg, #60a5fa, #2563eb); }
-    .win-btns { display: flex; gap: 2px; }
-    .win-btns span { width: 46px; height: 28px; display: grid; place-items: center; color: #333; font-size: 11px; border-radius: 4px; }
-    .win-btns span:hover { background: #eee; }
-    .win-btns .x:hover { background: #e81123; color: #fff; }
-    .chrome { background: #f8f8f8; border-bottom: 1px solid var(--border); }
-    .tabs { display: flex; gap: 2px; padding: 6px 8px 0; }
-    .tab { background: #fff; border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; padding: 7px 14px; font-size: 12px; color: #333; }
-    .toolbar { display: flex; gap: 6px; align-items: center; padding: 8px 12px; flex-wrap: wrap; background: #fff; border-top: 1px solid var(--border); }
-    .tool { border: none; background: transparent; padding: 6px 10px; border-radius: 6px; font-size: 12px; color: #333; cursor: pointer; }
-    .tool:hover { background: #f0f0f0; }
-    .tool.disabled { color: #aaa; cursor: default; }
-    .tool.lock-btn { color: #c45c00; font-weight: 600; }
-    .pathbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #fff; border-bottom: 1px solid var(--border); }
-    .navbtn { width: 28px; height: 28px; border-radius: 6px; border: 1px solid transparent; background: #fff; cursor: pointer; }
-    .navbtn:hover { background: #f3f3f3; border-color: #ddd; }
-    .breadcrumb { flex: 1; height: 32px; border: 1px solid #d0d0d0; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; background: #fff; gap: 8px; }
-    .search { width: 220px; height: 32px; border: 1px solid #d0d0d0; border-radius: 6px; padding: 0 12px; font-size: 13px; outline: none; }
-    .body { flex: 1; display: grid; grid-template-columns: 220px 1fr; min-height: 0; background: #fff; }
-    .sidebar { background: var(--sidebar); border-right: 1px solid var(--border); padding: 10px 8px; overflow: auto; }
-    .side-label { font-size: 11px; color: var(--muted); padding: 8px 10px 4px; text-transform: uppercase; letter-spacing: .04em; }
-    .side-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; color: #222; }
-    .side-item:hover { background: #efefef; }
-    .side-item.active { background: var(--blue-soft); color: #0b5cab; font-weight: 600; }
-    .side-item .ico { width: 18px; text-align: center; }
-    .side-item.quarantine { color: #c45c00; }
-    .side-item.quarantine.active { background: #fff3e6; color: #9a3b00; }
-    .side-item .lock-tag { font-size: 10px; margin-left: auto; padding: 1px 6px; border-radius: 3px; background: #f0f0f0; color: #666; }
-    .main { display: flex; flex-direction: column; min-width: 0; }
-    .status-strip { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); background: #fcfcfc; }
-    .badge { font-weight: 700; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; }
-    .badge.ok { color: var(--green); background: #e8f5e9; border-color: #c8e6c9; }
-    .badge.warn { color: #9a5b00; background: #fff4e5; border-color: #ffe0b2; }
-    .badge.danger { color: #fff; background: var(--red); border-color: var(--red); }
-    .badge.protected { color: #0b5cab; background: #e8f3ff; border-color: #b3d7f5; }
-    .content { flex: 1; overflow: auto; padding: 18px; background: #fff; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
-    .card { border: 1px solid transparent; border-radius: 10px; padding: 14px 10px 12px; cursor: pointer; text-align: center; transition: .15s ease; background: #fff; position: relative; }
-    .card:hover { background: #f5f9ff; border-color: #cfe4ff; }
-    .card .folder-ico { font-size: 42px; line-height: 1; margin-bottom: 8px; }
-    .card .name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
-    .card .meta { font-size: 11px; color: var(--muted); }
-    .card.compromised .meta { color: var(--red); font-weight: 600; }
-    .card.quarantine .name { color: #c45c00; }
-    .card.locked .folder-ico::after { content: "🔒"; position: absolute; font-size: 20px; margin-left: -12px; margin-top: 12px; }
-    .file-table { width: 100%; border-collapse: collapse; }
-    .file-table th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-    .file-table td { padding: 10px; border-bottom: 1px solid #f0f0f0; font-size: 13px; vertical-align: middle; }
-    .file-table tr:hover td { background: #f7fbff; cursor: pointer; }
-    .file-name { display: flex; align-items: center; gap: 10px; font-weight: 500; }
-    .f-ico { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; font-size: 14px; background: #f3f3f3; }
-    .f-ico.locked { background: #ffe8e8; }
-    .f-ico.q { background: #fff1e0; }
-    .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
-    .pill.enc { background: #fde7e9; color: #a4262c; }
-    .pill.q { background: #fff1e0; color: #c45c00; }
-    .pill.ok { background: #e8f5e9; color: #0b6a0b; }
-    .empty { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 14px; line-height: 1.6; }
-    .empty .big-ico { font-size: 48px; margin-bottom: 10px; }
-    .empty b { color: #333; font-size: 16px; }
-    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
-    .modal-bg.show { display: flex; }
-    .modal { width: min(720px, 100%); max-height: 80vh; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.3); display: flex; flex-direction: column; }
-    .modal-h { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 600; }
-    .modal-b { padding: 16px; overflow: auto; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; background: #fafafa; color: #222; line-height: 1.45; }
-    .close-btn { border: none; background: #f0f0f0; width: 30px; height: 30px; border-radius: 6px; cursor: pointer; }
-    .taskbar { height: 40px; background: #2b2b2b; color: #fff; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; }
-    .win-logo { width: 18px; height: 18px; background: #00a4ef; border-radius: 3px; }
-    .stats-mini { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
-    .stats-mini b { color: #222; }
-    /* Vault Login */
-    .vault-modal { width: min(420px, 100%); }
-    .vault-body { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-    .vault-body .lock-icon { text-align: center; font-size: 42px; }
-    .vault-body h3 { text-align: center; font-size: 16px; color: #333; }
-    .vault-body p { text-align: center; font-size: 12px; color: var(--muted); line-height: 1.5; }
-    .vault-body label { font-size: 12px; font-weight: 600; color: #555; margin-top: 4px; }
-    .vault-body input { height: 36px; padding: 0 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; outline: none; }
-    .vault-body input:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(0,120,212,.15); }
-    .vault-body button { height: 38px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
-    .btn-primary { background: var(--blue); color: #fff; }
-    .btn-primary:hover { background: #005a9e; }
-    .btn-secondary { background: #f0f0f0; color: #333; border: 1px solid #ddd !important; }
-    .vault-err { color: var(--red); font-size: 12px; min-height: 16px; text-align: center; font-weight: 600; }
-    /* Quarantine vault view */
-    .q-banner { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; padding: 12px 14px; margin-bottom: 12px; border: 1px solid #cfe6cf; background: #f3faf3; border-radius: 8px; font-size: 13px; color: #1d4d1d; }
-    .q-banner b { font-size: 15px; }
-    .q-banner .q-path { color: #5b6b5b; font-family: Consolas, monospace; font-size: 12px; }
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
-    .pill.killed { background: #fde7e9; color: #a4262c; }
-    .pill.contained { background: #e6f4ea; color: #0b6a0b; }
-    .pill.ro { background: #eef1f5; color: #4a5568; }
-    .q-sub { color: var(--muted); font-size: 11px; font-family: Consolas, monospace; }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      min-width: 720px;
+      color: var(--ink-900);
+      font-family: var(--font);
+      font-size: 13px;
+      background:
+        radial-gradient(circle at 17% 12%, rgba(51, 133, 220, .27), transparent 30%),
+        radial-gradient(circle at 84% 84%, rgba(35, 92, 163, .35), transparent 38%),
+        linear-gradient(135deg, #08254a 0%, var(--navy-950) 58%, #06172d 100%);
+      overflow: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .16;
+      background-image: linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.7), transparent 75%);
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible { outline: 3px solid rgba(19, 119, 220, .3); outline-offset: 1px; }
+    .icon { width: 18px; height: 18px; display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .icon-fill { fill: currentColor; stroke: none; }
+    .svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+    .desktop-stage {
+      min-height: 100vh;
+      padding: 22px;
+      display: grid;
+      place-items: center;
+      position: relative;
+      z-index: 1;
+    }
+    .explorer-window {
+      width: min(1480px, 100%);
+      height: min(900px, calc(100vh - 44px));
+      min-height: 650px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid rgba(193, 215, 238, .55);
+      border-radius: var(--radius-window);
+      background: rgba(248, 251, 254, .94);
+      box-shadow: var(--shadow-window);
+      backdrop-filter: blur(24px) saturate(1.12);
+    }
+    .explorer-window.fullscreen {
+      width: 100vw;
+      height: 100vh;
+      border-radius: 0;
+    }
+
+    /* Window title bar */
+    .titlebar {
+      height: 54px;
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px 0 18px;
+      color: #f6fbff;
+      background: linear-gradient(110deg, #082b58, #0b376d 56%, #0d417c);
+      border-bottom: 1px solid rgba(255,255,255,.13);
+      user-select: none;
+    }
+    .titlebar-brand { display: flex; align-items: center; gap: 11px; min-width: 210px; }
+    .explorer-logo {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 8px;
+      background: linear-gradient(145deg, #45a7ff, #1764b8);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.38), 0 4px 10px rgba(0,0,0,.16);
+    }
+    .explorer-logo .icon { width: 17px; height: 17px; }
+    .title-copy { display: flex; flex-direction: column; gap: 1px; line-height: 1.1; }
+    .app-title { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+    .machine-name { color: rgba(234,244,255,.68); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .titlebar-center { display: flex; align-items: center; gap: 8px; margin: 0 auto; color: rgba(232,243,255,.76); font-size: 11px; letter-spacing: .02em; }
+    .online-dot { width: 7px; height: 7px; border-radius: 50%; background: #54e19a; box-shadow: 0 0 0 4px rgba(84,225,154,.12), 0 0 12px rgba(84,225,154,.6); }
+    .window-controls { height: 100%; display: flex; align-items: stretch; margin-left: 18px; }
+    .window-control {
+      width: 46px;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      border: 0;
+      color: rgba(243,249,255,.82);
+      background: transparent;
+      cursor: pointer;
+      transition: background .16s ease, color .16s ease;
+    }
+    .window-control .icon { width: 14px; height: 14px; stroke-width: 1.6; }
+    .window-control:hover { background: rgba(255,255,255,.12); color: #fff; }
+    .window-control.close:hover { background: #d83d4d; }
+
+    /* Ribbon tabs and command surface */
+    .tab-strip {
+      height: 42px;
+      min-height: 42px;
+      display: flex;
+      align-items: stretch;
+      padding: 0 14px;
+      gap: 4px;
+      background: rgba(249,252,255,.96);
+      border-bottom: 1px solid var(--line);
+    }
+    .tab {
+      position: relative;
+      min-width: 62px;
+      padding: 0 16px;
+      border: 0;
+      background: transparent;
+      color: var(--ink-700);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .tab:hover { color: var(--blue-700); background: rgba(231,242,255,.7); }
+    .tab.active { color: var(--blue-700); font-weight: 650; }
+    .tab.active::after {
+      content: "";
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: -1px;
+      height: 3px;
+      border-radius: 3px 3px 0 0;
+      background: var(--blue-600);
+    }
+    .tab.trailing { margin-left: auto; min-width: 0; padding: 0 8px; }
+    .protection-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      height: 26px;
+      padding: 0 10px;
+      border: 1px solid #ccebdc;
+      border-radius: 999px;
+      color: #177c4f;
+      background: var(--green-soft);
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .protection-chip .icon { width: 14px; height: 14px; }
+    .protection-chip .pulse { width: 6px; height: 6px; border-radius: 50%; background: #24ac70; box-shadow: 0 0 0 3px rgba(36,172,112,.13); }
+
+    .ribbon {
+      height: 82px;
+      min-height: 82px;
+      display: flex;
+      align-items: stretch;
+      padding: 6px 14px 5px;
+      gap: 8px;
+      color: var(--ink-700);
+      background: linear-gradient(#fbfdff, #f4f8fc);
+      border-bottom: 1px solid var(--line);
+    }
+    .ribbon-group { display: flex; align-items: stretch; gap: 3px; padding: 0 7px 0 2px; }
+    .ribbon-group + .ribbon-group { border-left: 1px solid var(--line); padding-left: 11px; }
+    .ribbon-group-label { align-self: end; margin: 0 0 1px 2px; color: #8b98a9; font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
+    .ribbon-command {
+      min-width: 54px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 5px 8px 3px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      color: var(--ink-700);
+      background: transparent;
+      cursor: pointer;
+      transition: .15s ease;
+    }
+    .ribbon-command:hover { color: var(--blue-700); border-color: #cfe4fa; background: var(--blue-050); }
+    .ribbon-command.primary { color: var(--blue-700); }
+    .ribbon-command .icon { width: 20px; height: 20px; stroke-width: 1.65; }
+    .ribbon-command span { font-size: 10px; white-space: nowrap; }
+    .ribbon-command .small-chevron { width: 10px; height: 10px; margin-left: -5px; }
+    .ribbon-note { align-self: center; margin-left: auto; max-width: 260px; display: flex; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid #dae7f4; border-radius: 9px; color: #52677f; background: rgba(255,255,255,.65); font-size: 11px; line-height: 1.35; }
+    .ribbon-note .icon { width: 17px; height: 17px; color: var(--blue-600); }
+
+    /* Address and search row */
+    .addressbar {
+      height: 58px;
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 16px;
+      background: rgba(255,255,255,.9);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-button {
+      width: 31px;
+      height: 31px;
+      display: grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: #657487;
+      background: transparent;
+      cursor: pointer;
+    }
+    .nav-button:hover { border-color: #d6e4f2; color: var(--blue-700); background: var(--blue-050); }
+    .nav-button.disabled { color: #b7c1cc; cursor: default; }
+    .nav-button .icon { width: 17px; height: 17px; }
+    .breadcrumb-shell {
+      min-width: 260px;
+      height: 34px;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 10px;
+      overflow: hidden;
+      border: 1px solid #cfdae6;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: inset 0 1px 2px rgba(20, 53, 91, .03);
+    }
+    .breadcrumb-shell > .icon { width: 17px; height: 17px; color: var(--blue-600); margin-right: 3px; }
+    .breadcrumb-button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 7px; border: 0; border-radius: 5px; color: var(--ink-700); background: transparent; cursor: pointer; white-space: nowrap; }
+    .breadcrumb-button:hover { color: var(--blue-700); background: var(--blue-050); }
+    .breadcrumb-button.current { color: var(--ink-900); font-weight: 600; }
+    .breadcrumb-chevron { width: 13px; height: 13px; color: #94a3b4; flex: 0 0 auto; }
+    .search-shell { width: min(300px, 28%); height: 34px; position: relative; display: flex; align-items: center; }
+    .search-shell > .icon { position: absolute; left: 11px; width: 16px; height: 16px; color: #7b8ba0; pointer-events: none; }
+    .search-input { width: 100%; height: 34px; padding: 0 34px 0 34px; border: 1px solid #cfdae6; border-radius: 8px; color: var(--ink-900); background: #fff; outline: none; }
+    .search-input::placeholder { color: #8c9bad; }
+    .search-input:focus { border-color: #75ace3; box-shadow: 0 0 0 3px rgba(19,119,220,.11); }
+    .clear-search { position: absolute; right: 7px; width: 23px; height: 23px; display: none; place-items: center; border: 0; border-radius: 5px; color: #7c8b9e; background: transparent; cursor: pointer; }
+    .clear-search.visible { display: grid; }
+    .clear-search:hover { background: var(--line-soft); color: var(--ink-900); }
+    .clear-search .icon { width: 13px; height: 13px; }
+
+    /* Workspace and navigation tree */
+    .workspace { flex: 1; min-height: 0; display: flex; background: var(--surface); }
+    .sidebar {
+      width: 248px;
+      min-width: 248px;
+      display: flex;
+      flex-direction: column;
+      padding: 17px 10px 12px;
+      overflow: auto;
+      color: var(--ink-700);
+      background: linear-gradient(180deg, rgba(243,248,253,.94), rgba(238,245,251,.78));
+      border-right: 1px solid var(--line);
+    }
+    .sidebar-section { margin-bottom: 17px; }
+    .sidebar-section-title { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 7px; color: #8996a5; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+    .section-pin { width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 5px; color: #98a6b6; background: transparent; cursor: pointer; }
+    .section-pin:hover { color: var(--blue-600); background: var(--blue-100); }
+    .nav-item {
+      width: 100%;
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      margin: 2px 0;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      color: #4d5d70;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: .14s ease;
+    }
+    .nav-item:hover { color: var(--ink-900); border-color: #dce8f4; background: rgba(255,255,255,.72); }
+    .nav-item.active { color: var(--blue-700); border-color: #c9e1fa; background: linear-gradient(90deg, #e3f1ff, #eef7ff); box-shadow: inset 3px 0 0 var(--blue-600), 0 2px 5px rgba(31, 105, 178, .06); }
+    .nav-item .nav-icon { width: 21px; height: 21px; display: grid; place-items: center; color: #718399; border-radius: 6px; }
+    .nav-item.active .nav-icon { color: var(--blue-600); }
+    .nav-item .icon { width: 17px; height: 17px; }
+    .nav-item .nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-item .pin-mark { width: 12px; height: 12px; margin-left: auto; color: #9aabc0; opacity: .75; }
+    .nav-divider { height: 1px; margin: 3px 10px 16px; background: #d9e3ed; }
+    .drive-item .nav-icon { color: #66809c; }
+    .drive-item .drive-meter { width: 9px; height: 9px; margin-left: auto; border: 2px solid #8ba0b8; border-radius: 3px; }
+    .sidebar-bottom { margin-top: auto; padding: 13px 8px 0; border-top: 1px solid #d9e3ed; }
+    .vault-nav {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 10px;
+      border: 1px solid #dce8f3;
+      border-radius: 9px;
+      color: #52677f;
+      background: rgba(255,255,255,.55);
+      cursor: pointer;
+      text-align: left;
+    }
+    .vault-nav:hover { border-color: #bcd7f0; background: #fff; }
+    .vault-nav .vault-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: #9a6c19; background: var(--orange-soft); }
+    .vault-nav .icon { width: 15px; height: 15px; }
+    .vault-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .vault-copy strong { color: var(--ink-700); font-size: 11px; }
+    .vault-copy span { color: #93a0ae; font-size: 10px; }
+    .vault-lock { width: 14px; height: 14px; margin-left: auto; color: #9aa8b7; }
+
+    .main-pane { min-width: 0; flex: 1; display: flex; flex-direction: column; background: #fbfdff; }
+    .main-scroll { flex: 1; min-height: 0; overflow: auto; padding: 28px 34px 30px; background: radial-gradient(circle at 80% 8%, rgba(224,239,253,.52), transparent 35%), #fbfdff; }
+    .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 25px; }
+    .page-kicker { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: #7a8ca0; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    .page-kicker .kicker-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue-600); box-shadow: 0 0 0 4px rgba(19,119,220,.1); }
+    .page-header h1 { margin: 0; color: var(--ink-900); font-size: clamp(25px, 2.25vw, 34px); font-weight: 680; letter-spacing: -.045em; line-height: 1.06; }
+    .page-subtitle { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; color: #7a899a; font-size: 12px; }
+    .page-subtitle .dot { width: 3px; height: 3px; border-radius: 50%; background: #aab8c7; }
+    .view-actions { display: flex; align-items: center; gap: 5px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: var(--shadow-soft); }
+    .view-action { width: 30px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 5px; color: #8292a4; background: transparent; cursor: pointer; }
+    .view-action:hover, .view-action.active { color: var(--blue-700); background: var(--blue-100); }
+    .view-action .icon { width: 16px; height: 16px; }
+    .section-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; color: var(--ink-700); font-size: 12px; font-weight: 650; }
+    .section-count { min-width: 21px; height: 19px; display: inline-grid; place-items: center; padding: 0 6px; border-radius: 999px; color: #6f8298; background: #edf3f8; font-size: 10px; font-weight: 700; }
+    .folder-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 17px; max-width: 820px; }
+    .folder-card {
+      min-height: 178px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 21px;
+      padding: 23px 23px;
+      overflow: hidden;
+      border: 1px solid #dce7f1;
+      border-radius: var(--radius-card);
+      color: var(--ink-900);
+      background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(247,251,255,.93));
+      box-shadow: var(--shadow-card);
+      text-align: left;
+      cursor: pointer;
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .folder-card::after { content: ""; position: absolute; width: 165px; height: 165px; right: -72px; bottom: -98px; border: 1px solid rgba(70, 148, 216, .11); border-radius: 50%; box-shadow: 0 0 0 22px rgba(70,148,216,.035), 0 0 0 44px rgba(70,148,216,.025); }
+    .folder-card:hover { transform: translateY(-3px); border-color: #b8d7f1; box-shadow: 0 17px 34px rgba(28, 83, 135, .14), 0 3px 9px rgba(28, 83, 135, .08); }
+    .folder-card:active { transform: translateY(-1px); }
+    .folder-art { width: 106px; height: 82px; position: relative; flex: 0 0 auto; filter: drop-shadow(0 10px 7px rgba(183, 122, 20, .19)); transition: transform .18s ease; }
+    .folder-card:hover .folder-art { transform: translateY(-2px) rotate(-2deg); }
+    .folder-art .folder-tab { position: absolute; left: 7px; top: 6px; width: 43px; height: 18px; border-radius: 8px 12px 0 0; background: linear-gradient(180deg, #ffd96a, #f5b82d); box-shadow: inset 0 1px 1px rgba(255,255,255,.6); }
+    .folder-art .folder-face { position: absolute; left: 0; right: 0; top: 16px; bottom: 3px; overflow: hidden; border-radius: 7px 9px 11px 11px; background: linear-gradient(160deg, #ffdc65 0%, var(--folder-yellow) 42%, var(--folder-gold) 100%); box-shadow: inset 0 1px 1px rgba(255,255,255,.62), inset 0 -4px 7px rgba(183, 105, 12, .15), 0 3px 0 #d78f17; }
+    .folder-art .folder-face::before { content: ""; position: absolute; width: 80%; height: 55%; left: -14%; top: -20%; transform: rotate(-18deg); background: linear-gradient(120deg, rgba(255,255,255,.56), rgba(255,255,255,0)); border-radius: 50%; }
+    .folder-art .folder-face::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 7px; height: 4px; border-radius: 50%; background: rgba(165, 90, 10, .12); filter: blur(2px); }
+    .folder-card-copy { position: relative; z-index: 1; min-width: 0; }
+    .folder-card-name { display: block; overflow: hidden; color: var(--ink-900); font-size: 15px; font-weight: 650; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-card-meta { display: flex; align-items: center; gap: 6px; margin-top: 9px; color: #8291a2; font-size: 11px; }
+    .folder-card-meta .icon { width: 13px; height: 13px; color: #96a7b8; }
+    .folder-more { position: absolute; z-index: 2; top: 13px; right: 13px; width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 6px; color: #96a6b5; background: transparent; cursor: pointer; }
+    .folder-more:hover { color: var(--blue-700); background: var(--blue-100); }
+    .folder-more .icon { width: 15px; height: 15px; }
+    .content-rule { max-width: 100%; height: 1px; margin: 29px 0 20px; background: linear-gradient(90deg, #dce6ef, transparent 90%); }
+    .media-note { max-width: 820px; display: flex; align-items: center; gap: 14px; margin-top: 24px; padding: 15px 18px; border: 1px solid #e1ebf4; border-radius: 11px; color: #6f8092; background: rgba(246,250,254,.75); }
+    .media-note-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; color: var(--blue-600); background: #e8f3ff; }
+    .media-note-icon .icon { width: 18px; height: 18px; }
+    .media-note-copy { display: flex; flex-direction: column; gap: 3px; }
+    .media-note-copy strong { color: #50657d; font-size: 11px; }
+    .media-note-copy span { font-size: 11px; }
+
+    /* Actual file list, empty states and quarantine view */
+    .file-section { max-width: 100%; margin-top: 26px; }
+    .file-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: var(--shadow-soft); }
+    .file-table { width: 100%; min-width: 650px; border-collapse: collapse; }
+    .file-table th { height: 37px; padding: 0 15px; border-bottom: 1px solid var(--line); color: #8290a0; background: #f8fafc; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-align: left; text-transform: uppercase; }
+    .file-table td { height: 48px; padding: 0 15px; border-bottom: 1px solid #edf2f6; color: #5d6d7e; font-size: 12px; }
+    .file-table tr:last-child td { border-bottom: 0; }
+    .file-table tbody tr { cursor: pointer; transition: background .13s ease; }
+    .file-table tbody tr:hover td { background: #f2f8ff; color: var(--ink-900); }
+    .file-name-cell { display: flex; align-items: center; gap: 10px; min-width: 230px; color: var(--ink-700); font-weight: 600; }
+    .file-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; color: #4b83b9; background: #e7f2ff; }
+    .file-icon .icon { width: 15px; height: 15px; }
+    .file-icon.image { color: #8a62bb; background: #f0eaff; }
+    .file-icon.doc { color: #3d70b8; background: #e8f0ff; }
+    .file-icon.sheet { color: #2e9564; background: #e7f7ee; }
+    .file-icon.pdf { color: #c75462; background: #ffedf0; }
+    .file-icon.archive { color: #a07322; background: #fff5de; }
+    .file-icon.locked { color: #a8681e; background: #fff2da; }
+    .empty-state { max-width: 620px; margin: 34px auto; padding: 44px 24px; border: 1px dashed #cfdde9; border-radius: 12px; color: #8090a0; background: rgba(248,251,254,.7); text-align: center; }
+    .empty-state .empty-icon { width: 46px; height: 46px; display: grid; place-items: center; margin: 0 auto 12px; border-radius: 14px; color: #6091bf; background: #eaf4fe; }
+    .empty-state .empty-icon .icon { width: 24px; height: 24px; }
+    .empty-state strong { display: block; margin-bottom: 7px; color: #566b81; font-size: 14px; }
+    .empty-state span { font-size: 12px; line-height: 1.55; }
+    .vault-banner { display: flex; align-items: center; gap: 13px; margin-bottom: 18px; padding: 13px 15px; border: 1px solid #d7e9df; border-radius: 10px; color: #557665; background: #f2fbf6; }
+    .vault-banner .banner-icon { width: 31px; height: 31px; display: grid; place-items: center; border-radius: 8px; color: #218054; background: #daf2e3; }
+    .vault-banner .icon { width: 16px; height: 16px; }
+    .vault-banner strong { display: block; color: #2b6c4a; font-size: 12px; }
+    .vault-banner span { display: block; margin-top: 3px; font-size: 11px; }
+    .status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; color: #24794f; background: #e9f8ef; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+    .status-pill.orange { color: #a66917; background: #fff3da; }
+    .status-pill .status-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+    .statusbar { height: 31px; min-height: 31px; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-top: 1px solid var(--line); color: #8190a0; background: rgba(246,249,252,.97); font-size: 11px; }
+    .statusbar-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .statusbar .icon { width: 13px; height: 13px; color: #8397ab; }
+    .statusbar-spacer { flex: 1; }
+    .statusbar-health { display: inline-flex; align-items: center; gap: 6px; color: #267c52; font-weight: 650; }
+    .statusbar-health .health-dot { width: 6px; height: 6px; border-radius: 50%; background: #28ad6e; box-shadow: 0 0 0 3px rgba(40,173,110,.11); }
+
+    /* Dialogs and transient feedback */
+    .modal-backdrop { position: fixed; inset: 0; z-index: 40; display: none; place-items: center; padding: 22px; background: rgba(3, 20, 42, .5); backdrop-filter: blur(8px); }
+    .modal-backdrop.show { display: grid; }
+    .modal { width: min(740px, 100%); max-height: min(680px, 88vh); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(218,230,242,.9); border-radius: 14px; background: #fff; box-shadow: 0 28px 80px rgba(0, 19, 45, .32); }
+    .modal-header { min-height: 57px; display: flex; align-items: center; gap: 11px; padding: 0 18px; border-bottom: 1px solid var(--line); color: var(--ink-900); }
+    .modal-header .modal-icon { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; color: var(--blue-700); background: var(--blue-100); }
+    .modal-header .modal-icon .icon { width: 16px; height: 16px; }
+    .modal-header strong { font-size: 14px; font-weight: 650; }
+    .modal-close { width: 29px; height: 29px; display: grid; place-items: center; margin-left: auto; border: 0; border-radius: 6px; color: #8190a1; background: transparent; cursor: pointer; }
+    .modal-close:hover { color: var(--danger); background: #fff0f2; }
+    .modal-close .icon { width: 15px; height: 15px; }
+    .preview-body { min-height: 210px; padding: 20px; overflow: auto; background: #f7f9fc; }
+    .preview-body pre { margin: 0; color: #344457; font: 12px/1.65 Consolas, "SFMono-Regular", monospace; white-space: pre-wrap; word-break: break-word; }
+    .vault-modal { width: min(440px, 100%); }
+    .vault-content { padding: 24px 26px 26px; }
+    .vault-hero { display: flex; flex-direction: column; align-items: center; padding: 4px 0 16px; text-align: center; }
+    .vault-hero-icon { width: 54px; height: 54px; display: grid; place-items: center; margin-bottom: 12px; border: 1px solid #cfe3f5; border-radius: 16px; color: var(--blue-700); background: linear-gradient(145deg, #e9f5ff, #d9ecff); box-shadow: 0 8px 18px rgba(49, 127, 197, .12); }
+    .vault-hero-icon .icon { width: 27px; height: 27px; }
+    .vault-hero h2 { margin: 0; color: var(--ink-900); font-size: 18px; letter-spacing: -.025em; }
+    .vault-hero p { max-width: 330px; margin: 8px 0 0; color: #7c8b9b; font-size: 12px; line-height: 1.5; }
+    .form-field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+    .form-field label { color: #617286; font-size: 11px; font-weight: 700; }
+    .form-input { width: 100%; height: 38px; padding: 0 11px; border: 1px solid #cedbe8; border-radius: 8px; color: var(--ink-900); background: #fbfdff; outline: none; }
+    .form-input:focus { border-color: #6cabe0; box-shadow: 0 0 0 3px rgba(19,119,220,.11); }
+    .vault-error { min-height: 18px; margin-top: 9px; color: var(--danger); font-size: 11px; font-weight: 600; text-align: center; }
+    .modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+    .button-primary, .button-secondary { height: 38px; border-radius: 8px; font-weight: 650; cursor: pointer; }
+    .button-primary { border: 1px solid #0a64bd; color: #fff; background: linear-gradient(180deg, #197fdf, #0868c7); box-shadow: 0 4px 9px rgba(8,104,199,.2); }
+    .button-primary:hover { background: linear-gradient(180deg, #2589e8, #096ccf); }
+    .button-secondary { border: 1px solid #d7e0e9; color: #5f6e7e; background: #f7f9fb; }
+    .button-secondary:hover { background: #eef3f8; }
+    .toast { position: fixed; z-index: 60; left: 50%; bottom: 32px; display: none; transform: translate(-50%, 12px); padding: 10px 15px; border: 1px solid rgba(198,219,238,.95); border-radius: 9px; color: #48617a; background: rgba(255,255,255,.95); box-shadow: 0 12px 30px rgba(5,30,60,.18); font-size: 12px; opacity: 0; transition: .2s ease; }
+    .toast.show { display: block; transform: translate(-50%, 0); opacity: 1; }
+
+    @media (max-width: 1050px) {
+      .ribbon-note { display: none; }
+      .sidebar { width: 220px; min-width: 220px; }
+      .main-scroll { padding-left: 25px; padding-right: 25px; }
+      .folder-grid { max-width: none; }
+    }
+    @media (max-width: 820px) {
+      body { min-width: 0; overflow: auto; }
+      .desktop-stage { padding: 0; display: block; }
+      .explorer-window { width: 100%; height: 100vh; min-height: 640px; border-radius: 0; border: 0; }
+      .titlebar-center { display: none; }
+      .titlebar-brand { min-width: 0; }
+      .sidebar { width: 194px; min-width: 194px; }
+      .main-scroll { padding: 22px 20px 24px; }
+      .search-shell { width: 31%; }
+    }
+    @media (max-width: 660px) {
+      .ribbon { overflow: hidden; }
+      .ribbon-group:nth-child(2), .ribbon-group:nth-child(3) { display: none; }
+      .tab { min-width: 52px; padding: 0 11px; }
+      .tab-strip { padding-left: 8px; }
+      .protection-chip { padding: 0 7px; }
+      .protection-chip span:not(.pulse) { display: none; }
+      .addressbar { gap: 3px; padding-left: 8px; padding-right: 8px; }
+      .nav-button { width: 27px; }
+      .breadcrumb-shell { min-width: 120px; }
+      .search-shell { width: 38%; }
+      .sidebar { width: 171px; min-width: 171px; padding-left: 6px; padding-right: 6px; }
+      .main-scroll { padding-left: 15px; padding-right: 15px; }
+      .page-header { align-items: flex-start; flex-direction: column; margin-bottom: 18px; }
+      .folder-grid { grid-template-columns: 1fr; }
+      .folder-card { min-height: 145px; }
+      .window-control { width: 34px; }
+    }
   </style>
 </head>
 <body>
-  <div class="window">
-    <div class="titlebar">
-      <div class="title-left">
-        <div class="app-icon"></div>
-        <span id="windowTitle">This PC</span>
-      </div>
-      <div class="win-btns">
-        <span>—</span><span>□</span><span class="x">✕</span>
-      </div>
-    </div>
+  <svg class="svg-defs" aria-hidden="true" focusable="false">
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 6.7A2.2 2.2 0 0 1 5.7 4.5h4l2 2.2h6.6a2.2 2.2 0 0 1 2.2 2.2v8.4a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2Z"/><path d="M3.8 9h16.4"/></symbol>
+    <symbol id="i-folder-open" viewBox="0 0 24 24"><path d="m3.5 7.2 1.4-2.1a1.6 1.6 0 0 1 1.4-.7h3.5l2 2.2h6.4a2.2 2.2 0 0 1 2.2 2.2v1.1"/><path d="m4 9.2 16.8.1-2.1 7.3a2 2 0 0 1-1.9 1.5H4.8a2 2 0 0 1-2-2.5Z"/></symbol>
+    <symbol id="i-pc" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="12" rx="1.8"/><path d="M8 20h8M12 16.7V20"/></symbol>
+    <symbol id="i-desktop" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="12" rx="1.5"/><path d="M8 20h8M12 16.5V20"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11M7.8 10.7 12 14.9l4.2-4.2M4 19.5h16"/></symbol>
+    <symbol id="i-document" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v13H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4M8.5 12h7M8.5 15.5h7"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.5" cy="9" r="1.4"/><path d="m4.5 17 4.5-4.5 3.2 3 2.2-2.2 5.1 4.7"/></symbol>
+    <symbol id="i-screenshot" viewBox="0 0 24 24"><path d="M7 4.5H4.5V7M17 4.5h2.5V7M7 19.5H4.5V17M17 19.5h2.5V17"/><rect x="7" y="7" width="10" height="10" rx="1"/><circle cx="12" cy="12" r="2.2"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"/><path d="M9 8.5 19 6.5M9 18.5c0 1.4-1.3 2.5-3 2.5s-3-1.1-3-2.5 1.3-2.5 3-2.5 3 1.1 3 2.5ZM19 16.5c0 1.4-1.3 2.5-3 2.5s-3-1.1-3-2.5 1.3-2.5 3-2.5 3 1.1 3 2.5Z"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3.5" y="6" width="12" height="12" rx="2"/><path d="m15.5 10 5-3v10l-5-3z"/><path d="m8.5 10 4 2-4 2z"/></symbol>
+    <symbol id="i-drive" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M6.5 15.5h.01M10 15.5h.01M13.5 15.5h.01M6.5 8.5h11"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.2c0 4.2-2.8 7.8-7 9.3-4.2-1.5-7-5.1-7-9.3V6Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10M12 14v2"/></symbol>
+    <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 7.1-2.6M12 14v2"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.5 4.5"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m14.5 5-7 7 7 7M8 12h12"/></symbol>
+    <symbol id="i-forward" viewBox="0 0 24 24"><path d="m9.5 5 7 7-7 7M16 12H4"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m5 14 7-7 7 7M12 7v13"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.8-3.8L4 9.5M4 5v4.5h4.5M4 13a8 8 0 0 0 14.8 3.8l1.2-2.3M20 19v-4.5h-4.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6.5" cy="7" r="2.2"/><circle cx="6.5" cy="17" r="2.2"/><path d="m8.3 8.3 10.2 7.4M8.3 15.7 18.5 8.3"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="m8.2 10.8 7.6-4M8.2 13.2l7.6 4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 4h4l1 3H9zM7 7l1 13h8l1-13M10 10v7M14 10v7"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M6 5v14M3.5 7.5 6 5l2.5 2.5M18 19V5M15.5 16.5 18 19l2.5-2.5"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 10.5v5M12 7.5h.01"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="m15.5 4.5 4 4-2.2 1.2-2.2 5.2 1.6 1.6-1.2 1.2-4-4-4.8 2.4-1.5-1.5 3.4-3.4-1.7-4.2 1.3-1.3 4.2 1.7zM12 16.5l-4.5 4.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-window-min" viewBox="0 0 24 24"><path d="M5 17h14"/></symbol>
+    <symbol id="i-window-max" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx=".5"/></symbol>
+  </svg>
 
-    <div class="chrome">
-      <div class="tabs"><div class="tab">File Explorer</div></div>
-      <div class="toolbar">
-        <button class="tool disabled">+ New</button>
-        <button class="tool disabled">Cut</button>
-        <button class="tool disabled">Copy</button>
-        <button class="tool disabled">Paste</button>
-        <button class="tool disabled">Rename</button>
-        <button class="tool" onclick="refreshAll()">Refresh</button>
-        <button class="tool" onclick="showHome()">This PC</button>
-        <button class="tool lock-btn" id="vaultBtn" onclick="handleVaultBtn()">🔐 Vault Login</button>
-      </div>
-      <div class="pathbar">
-        <button class="navbtn" onclick="showHome()" title="Up">↑</button>
-        <div class="breadcrumb">
-          <span>📁</span>
-          <span id="pathText">This PC</span>
+  <div class="desktop-stage">
+    <div class="explorer-window" id="explorerWindow">
+      <header class="titlebar">
+        <div class="titlebar-brand">
+          <div class="explorer-logo"><svg class="icon"><use href="#i-folder-open"></use></svg></div>
+          <div class="title-copy">
+            <span class="app-title">File Explorer</span>
+            <span class="machine-name">VICTIM-PC · LOCAL SESSION</span>
+          </div>
         </div>
-        <input class="search" id="searchBox" placeholder="Search This PC" oninput="filterFiles()" />
-      </div>
-    </div>
-
-    <div class="body">
-      <aside class="sidebar">
-        <div class="side-label">Home</div>
-        <div class="side-item" data-goto="Desktop" onclick="openFolder('Desktop')"><span class="ico">🖥️</span>Desktop</div>
-        <div class="side-item" data-goto="Downloads" onclick="openFolder('Downloads')"><span class="ico">⬇️</span>Downloads</div>
-        <div class="side-item" data-goto="Documents" onclick="openFolder('Documents')"><span class="ico">📄</span>Documents</div>
-        <div class="side-item" data-goto="Pictures" onclick="openFolder('Pictures')"><span class="ico">🖼️</span>Pictures</div>
-
-        <div class="side-label">This PC</div>
-        <div class="side-item active" id="navThisPC" onclick="showHome()"><span class="ico">💻</span>This PC</div>
-        <div class="side-item" data-goto="Desktop" onclick="openFolder('Desktop')"><span class="ico">🖥️</span>Desktop</div>
-        <div class="side-item" data-goto="Documents" onclick="openFolder('Documents')"><span class="ico">📁</span>Documents</div>
-        <div class="side-item" data-goto="Downloads" onclick="openFolder('Downloads')"><span class="ico">📁</span>Downloads</div>
-        <div class="side-item" data-goto="Pictures" onclick="openFolder('Pictures')"><span class="ico">📁</span>Pictures</div>
-        <div class="side-item quarantine" data-goto="Quarantine" onclick="openFolder('Quarantine')">
-          <span class="ico">🛡️</span>Quarantine Vault
-          <span class="lock-tag" id="vaultTag">🔒</span>
+        <div class="titlebar-center"><span class="online-dot"></span><span>Local files are up to date</span></div>
+        <div class="window-controls" aria-label="Window controls">
+          <button class="window-control" type="button" aria-label="Minimize"><svg class="icon"><use href="#i-window-min"></use></svg></button>
+          <button class="window-control" type="button" id="maximizeBtn" aria-label="Maximize"><svg class="icon"><use href="#i-window-max"></use></svg></button>
+          <button class="window-control close" type="button" aria-label="Close" id="closeWindowBtn"><svg class="icon"><use href="#i-x"></use></svg></button>
         </div>
-        <div class="side-item" onclick="showHome()"><span class="ico">💾</span>Local Disk (C:)</div>
-      </aside>
+      </header>
 
-      <section class="main">
-        <!-- Neutral status bar, like a real explorer: item counts only.
-             Attack assessment is not part of the file explorer — that
-             is the SOC dashboard's job. -->
-        <div class="status-strip">
-          <div class="stats-mini" id="summaryText">Loading…</div>
-          <div class="badge protected">🛡️ Ransomware Shield · Monitoring</div>
+      <nav class="tab-strip" aria-label="File Explorer ribbon tabs">
+        <button class="tab" type="button" data-tab="File">File</button>
+        <button class="tab active" type="button" data-tab="Home">Home</button>
+        <button class="tab" type="button" data-tab="Share">Share</button>
+        <button class="tab" type="button" data-tab="View">View</button>
+        <div class="tab trailing"><span class="protection-chip"><span class="pulse"></span><svg class="icon"><use href="#i-shield"></use></svg><span>Protection active</span></span></div>
+      </nav>
+
+      <section class="ribbon" aria-label="File Explorer commands">
+        <div class="ribbon-group">
+          <button class="ribbon-command primary" type="button" id="newButton"><svg class="icon"><use href="#i-plus"></use></svg><span>New</span></button>
+          <button class="ribbon-command" type="button" id="refreshButton"><svg class="icon"><use href="#i-refresh"></use></svg><span>Refresh</span></button>
         </div>
-        <div class="content" id="content"></div>
+        <div class="ribbon-group">
+          <button class="ribbon-command" type="button" id="copyButton"><svg class="icon"><use href="#i-copy"></use></svg><span>Copy</span></button>
+          <button class="ribbon-command" type="button" id="shareButton"><svg class="icon"><use href="#i-share"></use></svg><span>Share</span></button>
+          <button class="ribbon-command" type="button" id="deleteButton"><svg class="icon"><use href="#i-trash"></use></svg><span>Delete</span></button>
+        </div>
+        <div class="ribbon-group">
+          <button class="ribbon-command" type="button" id="sortButton"><svg class="icon"><use href="#i-sort"></use></svg><span>Sort</span></button>
+          <button class="ribbon-command" type="button" id="viewButton"><svg class="icon"><use href="#i-grid"></use></svg><span>View</span></button>
+        </div>
+        <div class="ribbon-note"><svg class="icon"><use href="#i-info"></use></svg><span>This PC is protected by the local ransomware shield.</span></div>
       </section>
-    </div>
 
-    <div class="taskbar">
-      <div class="win-logo"></div>
-      <span>Windows 11 · VICTIM-PC</span>
-      <span id="liveClock" style="opacity:.8;margin-left:8px;"></span>
-    </div>
-  </div>
-
-  <!-- File Preview Modal -->
-  <div class="modal-bg" id="modalBg" onclick="closeModal(event)">
-    <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-h">
-        <span id="modalTitle">Preview</span>
-        <button class="close-btn" onclick="hideModal()">✕</button>
+      <div class="addressbar">
+        <button class="nav-button" type="button" id="backButton" aria-label="Back"><svg class="icon"><use href="#i-back"></use></svg></button>
+        <button class="nav-button disabled" type="button" id="forwardButton" aria-label="Forward"><svg class="icon"><use href="#i-forward"></use></svg></button>
+        <button class="nav-button" type="button" id="upButton" aria-label="Up one level"><svg class="icon"><use href="#i-up"></use></svg></button>
+        <button class="nav-button" type="button" id="addressRefreshButton" aria-label="Refresh"><svg class="icon"><use href="#i-refresh"></use></svg></button>
+        <div class="breadcrumb-shell" aria-label="Address bar">
+          <svg class="icon"><use href="#i-folder-open"></use></svg>
+          <button class="breadcrumb-button" type="button" id="rootBreadcrumb">This PC</button>
+          <svg class="breadcrumb-chevron"><use href="#i-chevron"></use></svg>
+          <button class="breadcrumb-button current" type="button" id="currentBreadcrumb">Videos</button>
+        </div>
+        <label class="search-shell" aria-label="Search current folder">
+          <svg class="icon"><use href="#i-search"></use></svg>
+          <input class="search-input" id="searchInput" type="search" placeholder="Search Videos" autocomplete="off" />
+          <button class="clear-search" type="button" id="clearSearch" aria-label="Clear search"><svg class="icon"><use href="#i-x"></use></svg></button>
+        </label>
       </div>
-      <div class="modal-b" id="modalBody">Loading…</div>
-    </div>
-  </div>
 
-  <!-- Vault Login Modal -->
-  <div class="modal-bg" id="vaultLoginBg">
-    <div class="modal vault-modal" onclick="event.stopPropagation()">
-      <div class="modal-h">
-        <span>🔐 Privileged User Access</span>
-        <button class="close-btn" onclick="hideVaultLogin()">✕</button>
-      </div>
-      <div class="vault-body">
-        <div class="lock-icon">🛡️</div>
-        <h3>Quarantine Vault Access</h3>
-        <p>This vault is restricted to the authorized endpoint user only.<br/>
-           Ransomware processes cannot access isolated files.</p>
+      <div class="workspace">
+        <aside class="sidebar" aria-label="Navigation pane">
+          <section class="sidebar-section">
+            <div class="sidebar-section-title"><span>Quick access</span><button class="section-pin" type="button" aria-label="Pin a folder"><svg class="icon"><use href="#i-pin"></use></svg></button></div>
+            <button class="nav-item" type="button" data-folder="Desktop"><span class="nav-icon"><svg class="icon"><use href="#i-desktop"></use></svg></span><span class="nav-label">Desktop</span><svg class="pin-mark icon"><use href="#i-pin"></use></svg></button>
+            <button class="nav-item" type="button" data-folder="Downloads"><span class="nav-icon"><svg class="icon"><use href="#i-download"></use></svg></span><span class="nav-label">Downloads</span><svg class="pin-mark icon"><use href="#i-pin"></use></svg></button>
+            <button class="nav-item" type="button" data-folder="Documents"><span class="nav-icon"><svg class="icon"><use href="#i-document"></use></svg></span><span class="nav-label">Documents</span><svg class="pin-mark icon"><use href="#i-pin"></use></svg></button>
+            <button class="nav-item" type="button" data-folder="Pictures"><span class="nav-icon"><svg class="icon"><use href="#i-image"></use></svg></span><span class="nav-label">Pictures</span><svg class="pin-mark icon"><use href="#i-pin"></use></svg></button>
+            <button class="nav-item" type="button" data-folder="Screenshots"><span class="nav-icon"><svg class="icon"><use href="#i-screenshot"></use></svg></span><span class="nav-label">Screenshots</span><svg class="pin-mark icon"><use href="#i-pin"></use></svg></button>
+          </section>
 
-        <label>Username</label>
-        <input id="vaultUser" value="victim_user" autocomplete="off" />
+          <div class="nav-divider"></div>
 
-        <label>PIN / Password</label>
-        <input id="vaultPin" type="password" inputmode="numeric" placeholder="Enter vault PIN"
-               autocomplete="off" onkeydown="if(event.key==='Enter') vaultLogin()" />
+          <section class="sidebar-section">
+            <div class="sidebar-section-title"><span>This PC</span></div>
+            <button class="nav-item" type="button" data-folder="Desktop"><span class="nav-icon"><svg class="icon"><use href="#i-desktop"></use></svg></span><span class="nav-label">Desktop</span></button>
+            <button class="nav-item" type="button" data-folder="Documents"><span class="nav-icon"><svg class="icon"><use href="#i-folder"></use></svg></span><span class="nav-label">Documents</span></button>
+            <button class="nav-item" type="button" data-folder="Downloads"><span class="nav-icon"><svg class="icon"><use href="#i-folder"></use></svg></span><span class="nav-label">Downloads</span></button>
+            <button class="nav-item" type="button" data-folder="Music"><span class="nav-icon"><svg class="icon"><use href="#i-music"></use></svg></span><span class="nav-label">Music</span></button>
+            <button class="nav-item" type="button" data-folder="Pictures"><span class="nav-icon"><svg class="icon"><use href="#i-image"></use></svg></span><span class="nav-label">Pictures</span></button>
+            <button class="nav-item active" type="button" data-folder="Videos"><span class="nav-icon"><svg class="icon"><use href="#i-video"></use></svg></span><span class="nav-label">Videos</span></button>
+            <button class="nav-item drive-item" type="button" data-folder="Windows-SSD"><span class="nav-icon"><svg class="icon"><use href="#i-drive"></use></svg></span><span class="nav-label">Windows-SSD</span><span class="drive-meter"></span></button>
+          </section>
 
-        <div id="vaultErr" class="vault-err"></div>
-        <button class="btn-primary" onclick="vaultLogin()">Unlock Quarantine Vault</button>
-        <button class="btn-secondary" onclick="hideVaultLogin()">Cancel</button>
-      </div>
-    </div>
-  </div>
-
-<script>
-  const FOLDER_ICONS = {
-    Documents: "📁", Downloads: "📁", Desktop: "🖥️",
-    Pictures: "🖼️", Quarantine: "🛡️", "Local Disk (C:)": "💾",
-  };
-
-  let currentFolder = null;
-  let folderCache = [];
-  let fileCache = [];
-  let statusCache = {};
-  let vaultUnlocked = false;
-
-  function setActiveNav(folder) {
-    document.querySelectorAll(".side-item").forEach(el => el.classList.remove("active"));
-    if (!folder) { document.getElementById("navThisPC")?.classList.add("active"); return; }
-    document.querySelectorAll(`.side-item[data-goto="${folder}"]`).forEach(el => el.classList.add("active"));
-  }
-
-  async function fetchJSON(url) {
-    const res = await fetch(url);
-    if (!res.ok && res.status !== 401) throw new Error(url + " failed");
-    return res.json();
-  }
-
-  async function checkVault() {
-    try {
-      const s = await fetchJSON("/api/vault/status");
-      vaultUnlocked = !!s.unlocked;
-      updateVaultUI();
-    } catch { vaultUnlocked = false; updateVaultUI(); }
-    return vaultUnlocked;
-  }
-
-  function updateVaultUI() {
-    const btn = document.getElementById("vaultBtn");
-    const tag = document.getElementById("vaultTag");
-    if (vaultUnlocked) {
-      btn.textContent = "🔓 Lock Vault";
-      btn.style.color = "#107c10";
-      tag.textContent = "🔓";
-      tag.style.background = "#e8f5e9";
-      tag.style.color = "#0b6a0b";
-    } else {
-      btn.textContent = "🔐 Vault Login";
-      btn.style.color = "#c45c00";
-      tag.textContent = "🔒";
-      tag.style.background = "#f0f0f0";
-      tag.style.color = "#666";
-    }
-  }
-
-  function handleVaultBtn() {
-    if (vaultUnlocked) vaultLogout();
-    else showVaultLogin();
-  }
-
-  // Neutral explorer status bar — item counts only, exactly like the
-  // Windows File Explorer status bar. No attack intelligence here.
-  function setNeutralStatus(text) {
-    const el = document.getElementById("summaryText");
-    if (el) el.textContent = text || "";
-  }
-
-  async function refreshStatus() {
-    await checkVault();
-    if (currentFolder) {
-      setNeutralStatus(`${fileCache.length} item${fileCache.length === 1 ? "" : "s"}`);
-    } else {
-      const total = folderCache.filter(f => f.name !== "Quarantine").reduce((a, f) => a + (f.file_count || 0), 0);
-      setNeutralStatus(`${total} files`);
-    }
-  }
-
-  async function showHome() {
-    currentFolder = null;
-    setActiveNav(null);
-    document.getElementById("pathText").textContent = "This PC";
-    document.getElementById("windowTitle").textContent = "This PC";
-    document.getElementById("searchBox").value = "";
-
-    try { folderCache = await fetchJSON("/api/folders"); }
-    catch { folderCache = []; }
-
-    const totalFiles = folderCache.filter(f => f.name !== "Quarantine").reduce((a, f) => a + (f.file_count || 0), 0);
-
-    // A plain "This PC" view: folders with item counts + the disk.
-    // No attack status, no "encrypted" markers.
-    const cards = [
-      ...folderCache.map(f => ({
-        name: f.name, count: f.file_count, size: f.size,
-        locked: f.locked, isFolder: true,
-      })),
-      { name: "Local Disk (C:)", count: totalFiles, size: "", locked: false, isFolder: false }
-    ];
-
-    const html = `<div class="grid">${cards.map(c => {
-      const isQ = c.name === "Quarantine";
-      const isLocked = c.locked;
-      let meta;
-      if (isQ && isLocked) meta = `🔒 Locked`;
-      else if (isQ) meta = `${c.count || 0} items`;
-      else meta = `${c.count || 0} items`;
-
-      const cls = ["card", isQ ? "quarantine" : "", isLocked ? "locked" : ""].join(" ");
-      const click = c.name === "Local Disk (C:)" ? "showHome()" : `openFolder('${c.name}')`;
-
-      return `<div class="${cls}" onclick="${click}">
-                <div class="folder-ico">${FOLDER_ICONS[c.name] || "📁"}</div>
-                <div class="name">${c.name}</div>
-                <div class="meta">${meta}${c.size && !isQ ? " · " + c.size : ""}</div>
-              </div>`;
-    }).join("")}</div>`;
-    document.getElementById("content").innerHTML = html;
-    setNeutralStatus(`${totalFiles} files`);
-  }
-
-  async function openFolder(name) {
-    currentFolder = name;
-    setActiveNav(name);
-    document.getElementById("pathText").textContent = `This PC \\ ${name}`;
-    document.getElementById("windowTitle").textContent = name;
-    document.getElementById("searchBox").value = "";
-
-    if (name === "Quarantine" && !vaultUnlocked) {
-      await checkVault();
-      if (!vaultUnlocked) {
-        document.getElementById("content").innerHTML = `
-          <div class="empty">
-            <div class="big-ico">🔐</div>
-            <b>Privileged Access Required</b><br/><br/>
-            Quarantine Vault contains isolated malicious files.<br/>
-            Only the authorized user can access this vault.<br/><br/>
-            <button class="btn-primary" style="padding:10px 18px;border:none;border-radius:8px;background:#0078d4;color:#fff;font-weight:600;cursor:pointer;" onclick="showVaultLogin()">
-              🔓 Authenticate to Unlock
+          <div class="sidebar-bottom">
+            <button class="vault-nav" type="button" id="vaultButton">
+              <span class="vault-icon"><svg class="icon"><use href="#i-shield"></use></svg></span>
+              <span class="vault-copy"><strong>Quarantine vault</strong><span id="vaultState">Locked · privileged access</span></span>
+              <svg class="vault-lock icon" id="vaultStateIcon"><use href="#i-lock"></use></svg>
             </button>
-          </div>`;
-        return;
-      }
-    }
+          </div>
+        </aside>
 
-    try {
-      const res = await fetch("/api/files/" + encodeURIComponent(name));
-      if (res.status === 401) {
-        showVaultLogin();
-        return;
-      }
-      fileCache = await res.json();
-      if (!Array.isArray(fileCache)) fileCache = fileCache.files || [];
-    } catch { fileCache = []; }
-
-    renderFiles(fileCache);
-    await refreshStatus();
-  }
-
-  // Icon from the extension only — a real explorer never reveals
-  // whether a file is "encrypted"; it just shows a file icon.
-  function fileIcon(file) {
-    const ext = (file.extension || "").toLowerCase();
-    if ([".jpg",".jpeg",".png",".gif",".bmp"].includes(ext)) return "🖼️";
-    if ([".doc",".docx"].includes(ext)) return "📄";
-    if ([".xls",".xlsx",".csv"].includes(ext)) return "📊";
-    if (ext === ".pdf") return "📕";
-    if ([".zip",".rar",".7z"].includes(ext)) return "🗜️";
-    if ([".txt",".log"].includes(ext)) return "📝";
-    if ([".exe",".msi"].includes(ext)) return "⚙️";
-    return "📄";
-  }
-
-  function renderQuarantine(files) {
-    const killed = {};
-    files.forEach(f => { if (f.process_killed && f.killed_pid) killed[f.killed_pid] = f.killed_name; });
-    const killedTxt = Object.keys(killed).length
-      ? Object.entries(killed).map(([pid, n]) => `PID ${pid} (${escapeHtml(n || "?")})`).join(", ")
-      : "none recorded";
-    const rows = files.map(f => `
-      <tr onclick="previewFile('Quarantine', \`${f.name.replace(/`/g, "")}\`)">
-        <td><div class="file-name">
-          <div class="f-ico">🦠</div>
-          <div>${escapeHtml(f.original_name)}<div class="q-sub">${escapeHtml(f.name)}</div></div>
-        </div></td>
-        <td>${escapeHtml(f.from_folder || "-")}</td>
-        <td>${escapeHtml(f.quarantined_at || f.modified || "-")}</td>
-        <td>${f.process_killed
-              ? `<span class="pill killed">KILLED PID ${f.killed_pid}</span>`
-              : `<span class="pill contained">CONTAINED</span>`}
-            ${f.read_only ? '<span class="pill ro">READ-ONLY</span>' : ""}</td>
-        <td>${f.size || "-"}</td>
-      </tr>`).join("");
-    document.getElementById("content").innerHTML = `
-      <div class="q-banner">
-        <b>🛡️ ${files.length} file${files.length === 1 ? "" : "s"} quarantined</b>
-        <span>Ransomware process killed: <b>${killedTxt}</b></span>
-        <span class="q-path">Clean copies were restored to their original folders.</span>
+        <main class="main-pane" aria-live="polite">
+          <div class="main-scroll" id="mainView"></div>
+          <footer class="statusbar">
+            <span class="statusbar-item" id="itemCount"><svg class="icon"><use href="#i-folder"></use></svg><span>2 items</span></span>
+            <span class="statusbar-item" id="selectionStatus">No items selected</span>
+            <span class="statusbar-spacer"></span>
+            <span class="statusbar-item"><svg class="icon"><use href="#i-drive"></use></svg><span>Local files</span></span>
+            <span class="statusbar-health"><span class="health-dot"></span><span id="healthText">Shield monitoring</span></span>
+          </footer>
+        </main>
       </div>
-      <table class="file-table">
-        <thead><tr>
-          <th style="width:38%">Original file</th><th style="width:14%">From</th>
-          <th style="width:18%">Quarantined</th><th style="width:20%">Response</th>
-          <th style="width:10%">Size</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }
-
-  function renderFiles(files) {
-    if (currentFolder === "Quarantine" && files.length) { renderQuarantine(files); return; }
-    if (!files.length) {
-      document.getElementById("content").innerHTML = `
-        <div class="empty">
-          ${currentFolder === "Quarantine"
-            ? '<div class="big-ico">🛡️</div><b>Quarantine Vault is empty</b><br/>Blocked ransomware files will appear here after defense intercepts an attack.'
-            : "This folder is empty."}
-        </div>`;
-      return;
-    }
-
-    // Plain explorer columns — Name / Date modified / Type / Size.
-    // No status pills, no family labels, no note markers.
-    const rows = files.map(f => {
-      return `<tr onclick="previewFile('${currentFolder}', \`${f.name.replace(/`/g, "")}\`)">
-                <td><div class="file-name">
-                  <div class="f-ico">${fileIcon(f)}</div>
-                  <div>${escapeHtml(f.name)}</div>
-                </div></td>
-                <td>${f.modified || "-"}</td>
-                <td>${f.extension || "File"}</td>
-                <td>${f.size || "-"}</td>
-              </tr>`;
-    }).join("");
-
-    document.getElementById("content").innerHTML = `
-      <table class="file-table">
-        <thead><tr>
-          <th style="width:50%">Name</th><th style="width:20%">Date modified</th>
-          <th style="width:15%">Type</th><th style="width:15%">Size</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>`;
-  }
-
-  function filterFiles() {
-    if (currentFolder == null) return;
-    const q = (document.getElementById("searchBox").value || "").toLowerCase();
-    const filtered = fileCache.filter(f => ((f.name || "") + " " + (f.original_name || "")).toLowerCase().includes(q));
-    renderFiles(filtered);
-  }
-
-  async function previewFile(folder, filename) {
-    document.getElementById("modalTitle").textContent = filename;
-    document.getElementById("modalBody").textContent = "Loading…";
-    document.getElementById("modalBg").classList.add("show");
-    try {
-      const res = await fetch(`/api/file/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`);
-      if (res.status === 401) {
-        hideModal();
-        showVaultLogin();
-        return;
-      }
-      const data = await res.json();
-      if (data.error) document.getElementById("modalBody").textContent = data.error;
-      else document.getElementById("modalBody").textContent = (data.content || "") + (data.truncated ? "\n\n… [truncated]" : "");
-    } catch { document.getElementById("modalBody").textContent = "Unable to preview file."; }
-  }
-
-  function hideModal() { document.getElementById("modalBg").classList.remove("show"); }
-  function closeModal(e) { if (e.target.id === "modalBg") hideModal(); }
-  function escapeHtml(s) { return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
-
-  // Vault Login
-  function showVaultLogin() {
-    document.getElementById("vaultErr").textContent = "";
-    document.getElementById("vaultPin").value = "";
-    document.getElementById("vaultLoginBg").classList.add("show");
-    setTimeout(() => document.getElementById("vaultPin").focus(), 100);
-  }
-  function hideVaultLogin() { document.getElementById("vaultLoginBg").classList.remove("show"); }
-
-  async function vaultLogin() {
-    const username = document.getElementById("vaultUser").value.trim();
-    const pin = document.getElementById("vaultPin").value.trim();
-    const errEl = document.getElementById("vaultErr");
-    errEl.textContent = "";
-    if (!pin) { errEl.textContent = "PIN required."; return; }
-
-    try {
-      const res = await fetch("/api/vault/login", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ username, pin })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        vaultUnlocked = true;
-        updateVaultUI();
-        hideVaultLogin();
-        // Unlocking the vault always opens it.
-        await openFolder("Quarantine");
-      } else {
-        errEl.textContent = "Wrong PIN — access denied.";
-        const pinEl = document.getElementById("vaultPin");
-        pinEl.value = ""; pinEl.focus();
-      }
-    } catch { errEl.textContent = "Login failed. Try again."; }
-  }
-
-  async function vaultLogout() {
-    await fetch("/api/vault/logout", { method: "POST" });
-    vaultUnlocked = false;
-    updateVaultUI();
-    if (currentFolder === "Quarantine") showHome();
-    else await refreshStatus();
-  }
-
-  async function refreshAll() {
-    if (currentFolder) await openFolder(currentFolder);
-    else await showHome();
-  }
-
-  function tickClock() {
-    const d = new Date();
-    document.getElementById("liveClock").textContent = d.toLocaleTimeString();
-  }
-
-  // Boot
-  (async () => {
-    await checkVault();
-    await showHome();
-  })();
-  tickClock();
-  setInterval(tickClock, 1000);
-  setInterval(refreshStatus, 3000);
-  setInterval(() => {
-    // Don't re-render (or re-open the login prompt) under an open dialog.
-    if (document.querySelector(".modal-bg.show")) return;
-    if (currentFolder) openFolder(currentFolder);
-    else showHome();
-  }, 3000);
-</script>
-</body>
-</html>
-=======
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>This PC</title>
-<style>
-  :root {
-    --accent: #0078d4;
-    --accent-soft: #e8f4fc;
-    --line: #e1e1e1;
-    --text: #1a1a1a;
-    --mute: #5f5f5f;
-    --bg: #f3f3f3;
-    --win: #ffffff;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    background: #0b3d91 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23003a7a' width='160' height='160'/%3E%3Ccircle fill='%23004ea8' cx='40' cy='40' r='60' opacity='.35'/%3E%3C/svg%3E");
-    font-family: "Segoe UI", "Segoe UI Variable", Tahoma, sans-serif;
-    color: var(--text);
-    font-size: 13px;
-  }
-  .desktop { height: 100%; padding: 18px; display: flex; }
-  .window {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: var(--win);
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 24px 80px rgba(0,0,0,.35);
-    border: 1px solid #c8c8c8;
-  }
-  .caption {
-    height: 32px;
-    display: flex;
-    align-items: center;
-    padding-left: 10px;
-    background: #f9f9f9;
-    border-bottom: 1px solid var(--line);
-    user-select: none;
-  }
-  .caption-icon {
-    width: 16px; height: 16px; margin-right: 8px;
-    background: var(--accent); border-radius: 2px;
-  }
-  .caption-title { font-size: 12px; color: #333; }
-  .caption-btns { margin-left: auto; display: flex; height: 100%; }
-  .caption-btns span {
-    width: 46px; display: grid; place-items: center; color: #222; font-size: 12px;
-  }
-  .caption-btns span:hover { background: #e5e5e5; }
-  .caption-btns .x:hover { background: #e81123; color: #fff; }
-  .tabs {
-    display: flex; gap: 2px; padding: 6px 8px 0; background: #f3f3f3;
-    border-bottom: 1px solid var(--line);
-  }
-  .tab {
-    background: #fff; border: 1px solid var(--line); border-bottom: 0;
-    border-radius: 8px 8px 0 0; padding: 6px 14px 8px; font-size: 12px;
-  }
-  .ribbon {
-    display: flex; align-items: center; gap: 4px;
-    padding: 6px 10px; background: #fbfbfb; border-bottom: 1px solid var(--line);
-  }
-  .rbtn {
-    border: 0; background: transparent; padding: 6px 10px; border-radius: 4px;
-    font: inherit; cursor: default; color: #333;
-  }
-  .rbtn:hover { background: #efefef; }
-  .navrow {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 10px; border-bottom: 1px solid var(--line);
-  }
-  .nbtn {
-    width: 28px; height: 28px; border: 0; background: transparent; border-radius: 4px;
-    cursor: pointer; font-size: 16px; color: #444;
-  }
-  .nbtn:hover { background: #eee; }
-  .path {
-    flex: 1; height: 30px; display: flex; align-items: center;
-    border: 1px solid #d0d0d0; border-radius: 4px; padding: 0 10px; background: #fff;
-    font-size: 13px;
-  }
-  .path b { font-weight: 600; }
-  .sep { color: #888; margin: 0 8px; }
-  .search {
-    width: 240px; height: 30px; border: 1px solid #d0d0d0; border-radius: 4px;
-    padding: 0 10px; font: inherit; outline: none;
-  }
-  .search:focus { border-color: var(--accent); }
-  .body { display: flex; flex: 1; min-height: 0; }
-  .tree {
-    width: 236px; background: #f7f7f7; border-right: 1px solid var(--line);
-    padding: 8px 6px; overflow: auto;
-  }
-  .tree h4 {
-    margin: 10px 10px 4px; font-size: 11px; color: #777; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .04em;
-  }
-  .titem {
-    width: 100%; display: flex; align-items: center; gap: 8px;
-    border: 0; background: transparent; text-align: left; padding: 7px 10px;
-    border-radius: 4px; font: inherit; cursor: pointer; color: #222;
-  }
-  .titem:hover { background: #ececec; }
-  .titem.active { background: var(--accent-soft); color: #005a9e; }
-  .ico { width: 18px; text-align: center; }
-  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .pc-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 8px; padding: 16px 20px;
-  }
-  .pc-tile {
-    display: flex; gap: 12px; align-items: center;
-    border: 1px solid transparent; border-radius: 6px; padding: 10px 12px;
-    background: transparent; text-align: left; font: inherit; cursor: pointer;
-  }
-  .pc-tile:hover { background: #f3f8fc; border-color: #cde6f7; }
-  .folder-glyph {
-    width: 42px; height: 34px; border-radius: 3px 3px 4px 4px;
-    background: linear-gradient(#ffd36a, #f0b429); box-shadow: inset 0 1px 0 #ffe9a8;
-    position: relative;
-  }
-  .folder-glyph:before {
-    content: ""; position: absolute; left: 0; top: -6px; width: 16px; height: 8px;
-    background: #f0b429; border-radius: 3px 6px 0 0;
-  }
-  .drive-glyph {
-    width: 42px; height: 34px; border-radius: 4px;
-    background: linear-gradient(#7ec8ff, #2b88d8); color: #fff;
-    display: grid; place-items: center; font-size: 11px; font-weight: 700;
-  }
-  .pc-tile small { display: block; color: var(--mute); margin-top: 2px; }
-  .list-head, .list-row {
-    display: grid; grid-template-columns: minmax(280px, 1.6fr) 160px 140px 90px;
-    align-items: center; padding: 0 18px; min-width: 740px;
-  }
-  .list-head {
-    height: 32px; color: #555; font-size: 12px; font-weight: 600;
-    border-bottom: 1px solid var(--line); background: #fafafa;
-  }
-  .list-row {
-    min-height: 36px; border-bottom: 1px solid #f2f2f2; cursor: pointer;
-  }
-  .list-row:hover { background: #e8f4fc; }
-  .list-row.lock { color: #c42b1c; background: #fff6f4; }
-  .name { display: flex; align-items: center; gap: 8px; overflow: hidden; }
-  .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ftype {
-    font-size: 9px; font-weight: 700; width: 28px; height: 32px;
-    display: grid; place-items: center; border-radius: 3px; background: #d9ebff; color: #0b5cab;
-  }
-  .ftype.pdf { background: #fde7e9; color: #c42b1c; }
-  .ftype.xls { background: #e4f7e8; color: #0f7b3b; }
-  .ftype.img { background: #f3e8ff; color: #5c2d91; }
-  .ftype.zip { background: #fff4d6; color: #835b00; }
-  .ftype.lock { background: #fde7e9; color: #c42b1c; }
-  .status {
-    height: 24px; display: flex; align-items: center; padding: 0 12px;
-    border-top: 1px solid var(--line); background: #f8f8f8; color: #666; font-size: 12px;
-  }
-  .status b { margin-left: auto; font-weight: 600; color: #0f7b3b; }
-  .status.bad b { color: #c42b1c; }
-  .modal {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35);
-    align-items: center; justify-content: center; z-index: 20;
-  }
-  .modal.open { display: flex; }
-  .dialog {
-    width: min(720px, 92vw); height: min(520px, 78vh); background: #fff;
-    border-radius: 8px; display: flex; flex-direction: column;
-    box-shadow: 0 20px 60px rgba(0,0,0,.3);
-  }
-  .dialog header { display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-  .dialog header button { margin-left: auto; border: 0; background: transparent; font-size: 18px; cursor: pointer; }
-  .dialog pre { margin: 0; padding: 16px; overflow: auto; flex: 1; font-family: Consolas, monospace; font-size: 12px; }
-  .taskbar {
-    position: fixed; left: 18px; right: 18px; bottom: 10px; height: 48px;
-    background: rgba(32,32,32,.72); backdrop-filter: blur(16px);
-    border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 18px;
-    color: #fff; font-size: 12px;
-  }
-  .start {
-    width: 28px; height: 28px; background: linear-gradient(#5cc8ff, #0078d4); border-radius: 4px;
-  }
-</style>
-</head>
-<body>
-<div class="desktop">
-  <div class="window">
-    <div class="caption">
-      <div class="caption-icon"></div>
-      <div class="caption-title" id="window-title">This PC</div>
-      <div class="caption-btns"><span>─</span><span>□</span><span class="x">✕</span></div>
-    </div>
-    <div class="tabs"><div class="tab">File Explorer</div></div>
-    <div class="ribbon">
-      <button class="rbtn">+ New</button>
-      <button class="rbtn">Cut</button>
-      <button class="rbtn">Copy</button>
-      <button class="rbtn">Paste</button>
-      <button class="rbtn">Rename</button>
-      <button class="rbtn">Share</button>
-      <button class="rbtn">Delete</button>
-      <button class="rbtn">Sort</button>
-      <button class="rbtn">View</button>
-    </div>
-    <div class="navrow">
-      <button class="nbtn" onclick="goThisPc()" title="Back">←</button>
-      <button class="nbtn" onclick="goThisPc()" title="Up">↑</button>
-      <div class="path">
-        <span>This PC</span>
-        <span class="sep" id="path-sep" hidden>›</span>
-        <b id="path-folder"></b>
-      </div>
-      <input class="search" id="searchbox" placeholder="Search This PC" oninput="render()">
-    </div>
-    <div class="body">
-      <aside class="tree">
-        <h4>Home</h4>
-        <button class="titem" onclick="openFolder('Desktop')"><span class="ico">🖥</span>Desktop</button>
-        <button class="titem" onclick="openFolder('Downloads')"><span class="ico">⬇</span>Downloads</button>
-        <button class="titem" onclick="openFolder('Documents')"><span class="ico">📄</span>Documents</button>
-        <button class="titem" onclick="openFolder('Pictures')"><span class="ico">🖼</span>Pictures</button>
-        <h4>This PC</h4>
-        <button class="titem active" id="nav-thispc" onclick="goThisPc()"><span class="ico">💻</span>This PC</button>
-        <button class="titem" onclick="openFolder('Desktop')"><span class="ico">🗂</span>Desktop</button>
-        <button class="titem" onclick="openFolder('Documents')"><span class="ico">📁</span>Documents</button>
-        <button class="titem" onclick="openFolder('Downloads')"><span class="ico">📁</span>Downloads</button>
-        <button class="titem" onclick="openFolder('Pictures')"><span class="ico">📁</span>Pictures</button>
-        <button class="titem"><span class="ico">💽</span>Local Disk (C:)</button>
-      </aside>
-      <section class="main">
-        <div id="pc-view" class="pc-grid"></div>
-        <div id="list-view" hidden>
-          <div class="list-head"><div>Name</div><div>Date modified</div><div>Type</div><div>Size</div></div>
-          <div id="file-list"></div>
-        </div>
-        <div class="status" id="statusline"><span id="footer-count">0 items</span><b id="footer-health">Healthy</b></div>
-      </section>
     </div>
   </div>
-</div>
-<div class="taskbar"><div class="start"></div><span>Windows 11 · VICTIM-PC</span></div>
-<div class="modal" id="preview-modal">
-  <div class="dialog">
-    <header><span id="modal-title">Preview</span><button onclick="closeModal()">✕</button></header>
-    <pre id="modal-content"></pre>
-  </div>
-</div>
-<script>
-  let view = "thispc";
-  let currentFolder = "";
-  let currentFiles = [];
-  let foldersMeta = [];
 
-  function escapeHtml(v) {
-    return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
-  }
-  function setActive(id) {
-    document.querySelectorAll(".titem").forEach(el => el.classList.remove("active"));
-    const hit = [...document.querySelectorAll(".titem")].find(el => el.textContent.trim() === id || el.id === id);
-    if (hit) hit.classList.add("active");
-  }
-  function goThisPc() {
-    view = "thispc";
-    currentFolder = "";
-    document.getElementById("path-sep").hidden = true;
-    document.getElementById("path-folder").textContent = "";
-    document.getElementById("window-title").textContent = "This PC";
-    document.getElementById("pc-view").hidden = false;
-    document.getElementById("list-view").hidden = true;
-    document.getElementById("nav-thispc").classList.add("active");
-    document.querySelectorAll(".titem").forEach(el => { if (el.id !== "nav-thispc") el.classList.remove("active"); });
-    loadThisPc();
-  }
-  async function loadThisPc() {
-    const res = await fetch("/api/folders");
-    foldersMeta = await res.json();
-    const extra = [
-      { name: "Local Disk (C:)", file_count: foldersMeta.reduce((a,f)=>a+(f.file_count||0),0), size: "", kind: "drive" }
+  <div class="modal-backdrop" id="previewModal" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+    <div class="modal">
+      <div class="modal-header"><span class="modal-icon"><svg class="icon"><use href="#i-document"></use></svg></span><strong id="previewTitle">Preview</strong><button class="modal-close" type="button" data-close="previewModal" aria-label="Close preview"><svg class="icon"><use href="#i-x"></use></svg></button></div>
+      <div class="preview-body"><pre id="previewBody">Loading…</pre></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="vaultModal" role="dialog" aria-modal="true" aria-labelledby="vaultTitle">
+    <div class="modal vault-modal">
+      <div class="modal-header"><span class="modal-icon"><svg class="icon"><use href="#i-shield"></use></svg></span><strong>Protected storage</strong><button class="modal-close" type="button" data-close="vaultModal" aria-label="Close vault login"><svg class="icon"><use href="#i-x"></use></svg></button></div>
+      <div class="vault-content">
+        <div class="vault-hero"><div class="vault-hero-icon"><svg class="icon"><use href="#i-lock"></use></svg></div><h2 id="vaultTitle">Unlock quarantine vault</h2><p>Privileged access is limited to the authorized endpoint user. Isolated evidence remains read-only.</p></div>
+        <div class="form-field"><label for="vaultUser">Username</label><input class="form-input" id="vaultUser" value="victim_user" autocomplete="off" /></div>
+        <div class="form-field"><label for="vaultPin">PIN / password</label><input class="form-input" id="vaultPin" type="password" inputmode="numeric" placeholder="Enter vault PIN" autocomplete="off" /></div>
+        <div class="vault-error" id="vaultError"></div>
+        <div class="modal-actions"><button class="button-primary" type="button" id="vaultLoginButton">Unlock vault</button><button class="button-secondary" type="button" data-close="vaultModal">Cancel</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const icon = (name, className = "icon") => `<svg class="${className}"><use href="#i-${name}"></use></svg>`;
+    const VIDEO_FOLDERS = [
+      { name: "Captures", detail: "Screen recordings", icon: "video" },
+      { name: "Movies & TV", detail: "Video library", icon: "folder-open" },
     ];
-    document.getElementById("pc-view").innerHTML = foldersMeta.map(f => `
-      <button class="pc-tile" onclick="openFolder('${escapeHtml(f.name)}')">
-        <div class="folder-glyph"></div>
-        <div><b>${escapeHtml(f.name)}</b><small>${f.file_count} items${f.encrypted ? " · encrypted" : ""}</small></div>
-      </button>`).join("") + extra.map(d => `
-      <button class="pc-tile">
-        <div class="drive-glyph">C:</div>
-        <div><b>${escapeHtml(d.name)}</b><small>NTFS · ${d.file_count} files</small></div>
-      </button>`).join("");
-    document.getElementById("footer-count").textContent = foldersMeta.length + " folders, 1 drive";
-  }
-  async function openFolder(folder) {
-    view = "folder";
-    currentFolder = folder;
-    document.getElementById("path-sep").hidden = false;
-    document.getElementById("path-folder").textContent = folder;
-    document.getElementById("window-title").textContent = folder;
-    document.getElementById("pc-view").hidden = true;
-    document.getElementById("list-view").hidden = false;
-    setActive(folder);
-    const res = await fetch("/api/files/" + encodeURIComponent(folder));
-    currentFiles = await res.json();
-    render();
-  }
-  function render() {
-    const q = document.getElementById("searchbox").value.toLowerCase();
-    const files = currentFiles.filter(f => f.name.toLowerCase().includes(q));
-    document.getElementById("footer-count").textContent = files.length + " items";
-    const list = document.getElementById("file-list");
-    if (!files.length) { list.innerHTML = "<div style='padding:40px;color:#777'>This folder is empty</div>"; return; }
-    list.innerHTML = files.map(file => {
-      const locked = file.encrypted;
-      const note = Boolean(file.is_note);
-      const type = locked ? "Encrypted file" : ((file.extension||"").replace(".","").toUpperCase() + " File");
-      const cls = (file.icon||"") + (locked ? " lock" : "");
-      let click = "";
-      if (!locked && note) click = `onclick="openNote('${currentFolder}','${escapeHtml(file.name)}')"`;
-      else if (!locked) click = `onclick="openFile('${currentFolder}','${escapeHtml(file.name)}')"`;
-      return `<div class="list-row ${locked?"lock":""}" ${click}>
-        <div class="name"><div class="ftype ${cls}">${escapeHtml((file.icon||"FILE").slice(0,3).toUpperCase())}</div>
-        <span>${escapeHtml(file.name)}</span></div>
-        <div>${escapeHtml(file.modified)}</div><div>${escapeHtml(type)}</div><div>${escapeHtml(file.size)}</div>
-      </div>`;
-    }).join("");
-  }
-  async function openFile(folder, filename) {
-    const res = await fetch(`/api/file/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`);
-    const data = await res.json();
-    document.getElementById("modal-title").textContent = data.name || filename;
-    document.getElementById("modal-content").textContent = res.ok ? (data.content || "") : "This file cannot be opened.";
-    document.getElementById("preview-modal").classList.add("open");
-  }
-  async function openNote(folder, filename) {
-    const res = await fetch(`/api/note/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`);
-    const data = await res.json();
-    document.getElementById("modal-title").textContent = filename;
-    document.getElementById("modal-content").textContent = data.content || "";
-    document.getElementById("preview-modal").classList.add("open");
-  }
-  function closeModal(){ document.getElementById("preview-modal").classList.remove("open"); }
-  async function updateStatus() {
-    const s = await (await fetch("/api/status")).json();
-    const line = document.getElementById("statusline");
-    const health = document.getElementById("footer-health");
-    if (s.system_status === "OPERATIONAL") {
-      line.className = "status"; health.textContent = "Healthy";
-    } else {
-      line.className = "status bad";
-      health.textContent = s.system_status + " · " + s.encrypted_files + " encrypted";
+    const state = {
+      currentFolder: "Videos",
+      parentFolder: "This PC",
+      fileCache: [],
+      folderCache: [],
+      vaultUnlocked: false,
+      search: "",
+      toastTimer: null,
+    };
+
+    const $ = (selector) => document.querySelector(selector);
+    const mainView = $("#mainView");
+    const searchInput = $("#searchInput");
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;", "'":"&#039;"}[char]));
     }
-  }
-  async function refresh() {
-    if (view === "thispc") await loadThisPc(); else await openFolder(currentFolder);
-    await updateStatus();
-  }
-  goThisPc();
-  updateStatus();
-  setInterval(() => { if (view === "folder") openFolder(currentFolder); updateStatus(); }, 2000);
-</script>
+    function escapeAttr(value) { return escapeHtml(value).replace(/`/g, "&#096;"); }
+
+    async function fetchJSON(url, options = {}) {
+      const response = await fetch(url, options);
+      let data = {};
+      try { data = await response.json(); } catch (_) { data = {}; }
+      if (!response.ok) {
+        const error = new Error(data.message || data.error || `Request failed: ${response.status}`);
+        error.status = response.status;
+        error.payload = data;
+        throw error;
+      }
+      return data;
+    }
+
+    async function getFiles(folder) {
+      const data = await fetchJSON(`/api/files/${encodeURIComponent(folder)}`);
+      if (Array.isArray(data)) return data;
+      return Array.isArray(data.files) ? data.files : [];
+    }
+
+    function setActiveNavigation() {
+      document.querySelectorAll(".nav-item").forEach((item) => {
+        const folder = item.dataset.folder;
+        const active = folder === state.currentFolder || (state.currentFolder !== "Videos" && state.parentFolder === folder);
+        item.classList.toggle("active", active);
+      });
+    }
+
+    function setBreadcrumb() {
+      const root = $("#rootBreadcrumb");
+      const leaf = $("#currentBreadcrumb");
+      root.textContent = state.parentFolder;
+      leaf.textContent = state.currentFolder;
+      document.title = `${state.currentFolder} — File Explorer`;
+    }
+
+    function setSearchChrome() {
+      const current = state.currentFolder || "This PC";
+      searchInput.placeholder = `Search ${current}`;
+      searchInput.value = state.search;
+      $("#clearSearch").classList.toggle("visible", Boolean(state.search));
+    }
+
+    function setStatusCount(count, label = "items") {
+      const noun = count === 1 ? label.replace(/s$/, "") : label;
+      $("#itemCount").innerHTML = `${icon("folder")}<span>${count} ${noun}</span>`;
+    }
+
+    function setPath(folder, parent = "This PC") {
+      state.currentFolder = folder;
+      state.parentFolder = parent;
+      setActiveNavigation();
+      setBreadcrumb();
+      setSearchChrome();
+    }
+
+    function folderCard(folder) {
+      return `<button class="folder-card" type="button" data-virtual-folder="${escapeAttr(folder.name)}" data-parent-folder="Videos">
+        <span class="folder-art" aria-hidden="true"><span class="folder-tab"></span><span class="folder-face"></span></span>
+        <span class="folder-card-copy"><span class="folder-card-name">${escapeHtml(folder.name)}</span><span class="folder-card-meta">${icon(folder.icon)}<span>${escapeHtml(folder.detail)}</span></span></span>
+        <span class="folder-more" aria-hidden="true">${icon("more")}</span>
+      </button>`;
+    }
+
+    function pageHeader(kicker, title, subtitle, count, showViews = true) {
+      return `<div class="page-header"><div><div class="page-kicker"><span class="kicker-dot"></span>${escapeHtml(kicker)}</div><h1>${escapeHtml(title)}</h1><p class="page-subtitle"><span>${escapeHtml(subtitle)}</span><span class="dot"></span><span>${count} item${count === 1 ? "" : "s"}</span></p></div>${showViews ? `<div class="view-actions" aria-label="View options"><button class="view-action active" type="button" title="Large icons">${icon("grid")}</button><button class="view-action" type="button" title="List">${icon("list")}</button></div>` : ""}</div>`;
+    }
+
+    function fileIconClass(file) {
+      const ext = String(file.extension || "").toLowerCase();
+      if ([".jpg", ".jpeg", ".png", ".gif", ".bmp"].includes(ext)) return ["image", "image"];
+      if ([".doc", ".docx", ".txt", ".log"].includes(ext)) return ["doc", "document"];
+      if ([".xls", ".xlsx", ".csv"].includes(ext)) return ["sheet", "document"];
+      if (ext === ".pdf") return ["pdf", "document"];
+      if ([".zip", ".rar", ".7z"].includes(ext)) return ["archive", "folder"];
+      if (file.process_killed || file.read_only) return ["locked", "lock"];
+      return ["", "document"];
+    }
+
+    function filteredFiles() {
+      const query = state.search.trim().toLowerCase();
+      if (!query) return state.fileCache;
+      return state.fileCache.filter((file) => `${file.name || ""} ${file.original_name || ""}`.toLowerCase().includes(query));
+    }
+
+    function fileTable(files, quarantine = false) {
+      if (!files.length) return "";
+      const rows = files.map((file) => {
+        const [className, iconName] = fileIconClass(file);
+        const title = quarantine ? (file.original_name || file.name) : file.name;
+        const sub = quarantine && file.original_name && file.name !== file.original_name ? `<small>${escapeHtml(file.name)}</small>` : "";
+        const status = quarantine ? (file.process_killed ? `<span class="status-pill orange"><span class="status-dot"></span>Contained</span>` : `<span class="status-pill"><span class="status-dot"></span>Read-only</span>`) : escapeHtml(file.extension || "File");
+        return `<tr class="file-row" data-file-name="${escapeAttr(file.name)}" data-file-folder="${escapeAttr(state.currentFolder)}">
+          <td><div class="file-name-cell"><span class="file-icon ${className}">${icon(iconName)}</span><span>${escapeHtml(title)}${sub}</span></div></td>
+          <td>${escapeHtml(file.modified || file.quarantined_at || "—")}</td>
+          <td>${status}</td>
+          <td>${escapeHtml(file.size || "—")}</td>
+        </tr>`;
+      }).join("");
+      return `<div class="file-table-wrap"><table class="file-table"><thead><tr><th style="width:46%">Name</th><th style="width:22%">Date modified</th><th style="width:18%">Type</th><th style="width:14%">Size</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
+    function renderVideos() {
+      const visibleFolders = VIDEO_FOLDERS.filter((folder) => !state.search || folder.name.toLowerCase().includes(state.search.toLowerCase()));
+      const files = filteredFiles();
+      const count = visibleFolders.length + files.length;
+      mainView.innerHTML = `${pageHeader("This PC / Videos", "Videos", "Local media", count)}
+        <div class="section-heading"><span>Folders</span><span class="section-count">${visibleFolders.length}</span></div>
+        ${visibleFolders.length ? `<div class="folder-grid">${visibleFolders.map(folderCard).join("")}</div>` : `<div class="empty-state"><span class="empty-icon">${icon("search")}</span><strong>No folders found</strong><span>Try another search term in this folder.</span></div>`}
+        ${files.length ? `<section class="file-section"><div class="section-heading"><span>Files</span><span class="section-count">${files.length}</span></div>${fileTable(files)}</section>` : ""}
+        ${!state.search && !files.length ? `<div class="media-note"><span class="media-note-icon">${icon("video")}</span><span class="media-note-copy"><strong>Your media library</strong><span>Captures and Movies &amp; TV are ready for your local video files.</span></span></div>` : ""}`;
+      setStatusCount(count);
+      wireViewActions();
+    }
+
+    function renderFolderFiles() {
+      const files = filteredFiles();
+      const title = state.currentFolder === "Quarantine" ? "Quarantine vault" : state.currentFolder;
+      const count = files.length;
+      const kicker = state.currentFolder === "Quarantine" ? "Protected storage" : `This PC / ${state.currentFolder}`;
+      const banner = state.currentFolder === "Quarantine" ? `<div class="vault-banner"><span class="banner-icon">${icon("shield")}</span><span><strong>Isolated files are read-only</strong><span>Clean copies remain in their original folders.</span></span></div>` : "";
+      const table = fileTable(files, state.currentFolder === "Quarantine");
+      const empty = `<div class="empty-state"><span class="empty-icon">${icon(state.currentFolder === "Quarantine" ? "shield" : "folder-open")}</span><strong>${state.currentFolder === "Quarantine" ? "Quarantine vault is empty" : "This folder is empty"}</strong><span>${state.currentFolder === "Quarantine" ? "Isolated evidence will appear here after a defense response." : "Files added to this folder will appear here."}</span></div>`;
+      mainView.innerHTML = `${pageHeader(kicker, title, state.currentFolder === "Quarantine" ? "Privileged view" : "Folder", count, false)}${banner}${table || empty}`;
+      setStatusCount(count);
+    }
+
+    function renderVirtualFolder() {
+      const files = filteredFiles();
+      mainView.innerHTML = `${pageHeader(`Videos / ${state.currentFolder}`, state.currentFolder, "Folder", files.length, false)}${fileTable(files) || `<div class="empty-state"><span class="empty-icon">${icon("folder-open")}</span><strong>This folder is empty</strong><span>Files added to this folder will appear here.</span></div>`}`;
+      setStatusCount(files.length);
+    }
+
+    function renderAccessRequired() {
+      mainView.innerHTML = `${pageHeader("Protected storage", "Quarantine vault", "Privileged access", 0, false)}<div class="empty-state"><span class="empty-icon">${icon("lock")}</span><strong>Unlock to view isolated files</strong><span>This protected location is available only to the authorized endpoint user.</span><br/><button class="button-primary" type="button" id="inlineVaultButton" data-action="open-vault" style="margin-top:18px;padding:0 18px;">Unlock vault</button></div>`;
+      setStatusCount(0);
+    }
+
+    function wireViewActions() {
+      document.querySelectorAll(".view-action").forEach((button) => button.addEventListener("click", () => {
+        document.querySelectorAll(".view-action").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        showToast(button.title === "List" ? "List view selected" : "Large icons selected");
+      }));
+    }
+
+    async function checkVault() {
+      try {
+        const status = await fetchJSON("/api/vault/status");
+        state.vaultUnlocked = Boolean(status.unlocked);
+      } catch (_) { state.vaultUnlocked = false; }
+      updateVaultUI();
+      return state.vaultUnlocked;
+    }
+
+    function updateVaultUI() {
+      const stateLabel = $("#vaultState");
+      const stateIcon = $("#vaultStateIcon");
+      if (state.vaultUnlocked) {
+        stateLabel.textContent = "Unlocked · authorized user";
+        stateIcon.innerHTML = `<use href="#i-unlock"></use>`;
+      } else {
+        stateLabel.textContent = "Locked · privileged access";
+        stateIcon.innerHTML = `<use href="#i-lock"></use>`;
+      }
+    }
+
+    function updateHealth(status) {
+      const system = status && status.system_status;
+      $("#healthText").textContent = system === "COMPROMISED" ? "Shield monitoring" : "Shield monitoring";
+      const chip = document.querySelector(".protection-chip");
+      if (chip) chip.classList.toggle("warning", system === "COMPROMISED");
+    }
+
+    async function refreshHealth() {
+      try { updateHealth(await fetchJSON("/api/status")); } catch (_) { $("#healthText").textContent = "Shield monitoring"; }
+    }
+
+    async function loadFolder(folder, parent = "This PC", options = {}) {
+      if (!options.preserveSearch) state.search = "";
+      setPath(folder, parent);
+      if (folder === "Captures" || folder === "Movies & TV") {
+        state.fileCache = [];
+        renderVirtualFolder();
+        return;
+      }
+      if (folder === "Quarantine") {
+        await checkVault();
+        if (!state.vaultUnlocked) { state.fileCache = []; renderAccessRequired(); return; }
+      }
+      try {
+        state.fileCache = await getFiles(folder);
+      } catch (error) {
+        if (error.status === 401) {
+          state.fileCache = [];
+          renderAccessRequired();
+          openVaultModal();
+          return;
+        }
+        state.fileCache = [];
+      }
+      if (folder === "Videos") renderVideos();
+      else renderFolderFiles();
+      await refreshHealth();
+    }
+
+    function openVaultModal() {
+      $("#vaultError").textContent = "";
+      $("#vaultPin").value = "";
+      $("#vaultModal").classList.add("show");
+      window.setTimeout(() => $("#vaultPin").focus(), 80);
+    }
+    function closeModal(id) { $("#" + id).classList.remove("show"); }
+
+    async function loginVault() {
+      const username = $("#vaultUser").value.trim();
+      const pin = $("#vaultPin").value.trim();
+      const error = $("#vaultError");
+      error.textContent = "";
+      if (!pin) { error.textContent = "PIN required."; return; }
+      try {
+        const result = await fetchJSON("/api/vault/login", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({username, pin}) });
+        if (result.ok) {
+          state.vaultUnlocked = true;
+          updateVaultUI();
+          closeModal("vaultModal");
+          await loadFolder("Quarantine");
+        }
+      } catch (_) {
+        error.textContent = "Wrong PIN — access denied.";
+        $("#vaultPin").value = "";
+        $("#vaultPin").focus();
+      }
+    }
+
+    async function logoutVault() {
+      try { await fetchJSON("/api/vault/logout", { method: "POST" }); } catch (_) {}
+      state.vaultUnlocked = false;
+      updateVaultUI();
+      if (state.currentFolder === "Quarantine") await loadFolder("Videos");
+      showToast("Quarantine vault locked");
+    }
+
+    async function previewFile(folder, filename) {
+      $("#previewTitle").textContent = filename;
+      $("#previewBody").textContent = "Loading…";
+      $("#previewModal").classList.add("show");
+      try {
+        const data = await fetchJSON(`/api/file/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`);
+        $("#previewBody").textContent = (data.content || "") + (data.truncated ? "\n\n… [truncated]" : "");
+      } catch (error) {
+        if (error.status === 401) { closeModal("previewModal"); openVaultModal(); }
+        else $("#previewBody").textContent = "Unable to preview this file.";
+      }
+    }
+
+    function showToast(message) {
+      const toast = $("#toast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      window.clearTimeout(state.toastTimer);
+      state.toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    function renderCurrent() {
+      setSearchChrome();
+      if (state.currentFolder === "Videos") renderVideos();
+      else if (state.currentFolder === "Captures" || state.currentFolder === "Movies & TV") renderVirtualFolder();
+      else if (state.currentFolder === "Quarantine" && !state.vaultUnlocked) renderAccessRequired();
+      else renderFolderFiles();
+    }
+
+    document.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("[data-action]");
+      if (actionButton && actionButton.dataset.action === "open-vault") {
+        openVaultModal();
+        return;
+      }
+      const folderButton = event.target.closest("[data-folder]");
+      if (folderButton) {
+        event.preventDefault();
+        const folder = folderButton.dataset.folder;
+        if (folder === "Quarantine") {
+          if (state.vaultUnlocked) loadFolder("Quarantine");
+          else openVaultModal();
+        } else if (folder === "Windows-SSD") {
+          showToast("Windows-SSD is the local system drive");
+          loadFolder("Videos");
+        } else loadFolder(folder);
+        return;
+      }
+      const virtual = event.target.closest("[data-virtual-folder]");
+      if (virtual) { loadFolder(virtual.dataset.virtualFolder, virtual.dataset.parentFolder); return; }
+      const row = event.target.closest(".file-row");
+      if (row) { previewFile(row.dataset.fileFolder, row.dataset.fileName); return; }
+      const close = event.target.closest("[data-close]");
+      if (close) { closeModal(close.dataset.close); return; }
+      if (event.target.classList.contains("modal-backdrop")) event.target.classList.remove("show");
+    });
+
+    document.querySelectorAll(".tab[data-tab]").forEach((tab) => tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab[data-tab]").forEach((item) => item.classList.remove("active"));
+      tab.classList.add("active");
+    }));
+    $("#rootBreadcrumb").addEventListener("click", () => loadFolder(state.parentFolder === "Videos" ? "Videos" : "Videos"));
+    $("#currentBreadcrumb").addEventListener("click", () => loadFolder(state.currentFolder, state.parentFolder));
+    $("#backButton").addEventListener("click", () => loadFolder(state.parentFolder === "Videos" ? "Videos" : "Videos"));
+    $("#upButton").addEventListener("click", () => loadFolder("Videos"));
+    $("#refreshButton").addEventListener("click", () => loadFolder(state.currentFolder, state.parentFolder, {preserveSearch: true}));
+    $("#addressRefreshButton").addEventListener("click", () => loadFolder(state.currentFolder, state.parentFolder, {preserveSearch: true}));
+    $("#newButton").addEventListener("click", () => showToast("This read-only explorer does not create folders"));
+    $("#copyButton").addEventListener("click", () => showToast("Select an item to copy"));
+    $("#shareButton").addEventListener("click", () => showToast("Sharing is unavailable in the lab explorer"));
+    $("#deleteButton").addEventListener("click", () => showToast("Files are protected from deletion in this view"));
+    $("#sortButton").addEventListener("click", () => showToast("Items are sorted by name"));
+    $("#viewButton").addEventListener("click", () => showToast("Large icon view"));
+    $("#clearSearch").addEventListener("click", () => { state.search = ""; renderCurrent(); searchInput.focus(); });
+    searchInput.addEventListener("input", () => { state.search = searchInput.value; renderCurrent(); });
+    $("#vaultButton").addEventListener("click", () => state.vaultUnlocked ? logoutVault() : openVaultModal());
+    $("#inlineVaultButton");
+    $("#vaultLoginButton").addEventListener("click", loginVault);
+    $("#vaultPin").addEventListener("keydown", (event) => { if (event.key === "Enter") loginVault(); });
+    $("#maximizeBtn").addEventListener("click", () => $("#explorerWindow").classList.toggle("fullscreen"));
+    $("#closeWindowBtn").addEventListener("click", () => showToast("File Explorer is running in the lab preview"));
+
+    (async function boot() {
+      await checkVault();
+      await loadFolder("Videos");
+      await refreshHealth();
+    })();
+    window.setInterval(refreshHealth, 5000);
+    window.setInterval(() => {
+      if (!document.querySelector(".modal-backdrop.show")) loadFolder(state.currentFolder, state.parentFolder, {preserveSearch: true});
+    }, 12000);
+  </script>
 </body>
 </html>
->>>>>>> 85a04faf32325b1e508a3812f9a640202c9cea72
